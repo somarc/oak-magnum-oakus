@@ -445,6 +445,34 @@ async function playAnimation() {
       [{ from: 'good_rev', to: 'rollback', color: '#8b5cf6' }],
       [{ from: 'rollback', to: 'success', color: '#22c55e' }],
     ],
+    'checkpoint-pin': [
+      [{ from: 'head', to: 'seg_current', color: '#3b82f6' }],
+      [{ from: 'async', to: 'cp_active', color: '#ec4899' }],
+      [{ from: 'cp_active', to: 'seg_pinned', color: '#ec4899' }],
+      [{ from: 'cp_orphan1', to: 'seg_orphan', color: '#ef4444' }, { from: 'cp_orphan2', to: 'seg_orphan', color: '#ef4444' }],
+      [{ from: 'seg_current', to: 'tar_current', color: '#4ade80' }],
+      [{ from: 'seg_pinned', to: 'tar_pinned', color: '#4ade80' }],
+      [{ from: 'seg_orphan', to: 'tar_blocked', color: '#ef4444' }],
+    ],
+    'tar-lifecycle': [
+      [{ from: 'gen_a1', to: 'compact', color: '#4ade80' }, { from: 'gen_a2', to: 'compact', color: '#4ade80' }, { from: 'gen_a3', to: 'compact', color: '#4ade80' }],
+      [{ from: 'compact', to: 'gen_b1', color: '#22c55e' }, { from: 'compact', to: 'gen_b2', color: '#22c55e' }],
+      [{ from: 'gen_b1', to: 'cleanup', color: '#8b5cf6' }, { from: 'gen_b2', to: 'cleanup', color: '#8b5cf6' }],
+      [{ from: 'cleanup', to: 'bak', color: '#4ade80' }],
+    ],
+    'compaction': [
+      [{ from: 'head', to: 'seg_live1', color: '#3b82f6' }, { from: 'head', to: 'seg_live2', color: '#3b82f6' }],
+      [{ from: 'cp1', to: 'seg_live2', color: '#ec4899' }],
+      [{ from: 'seg_live1', to: 'compact', color: '#4ade80' }, { from: 'seg_live2', to: 'compact', color: '#4ade80' }],
+      [{ from: 'seg_dead1', to: 'compact', color: '#ef4444' }, { from: 'seg_dead2', to: 'compact', color: '#ef4444' }],
+      [{ from: 'compact', to: 'new_seg1', color: '#22c55e' }, { from: 'compact', to: 'new_seg2', color: '#22c55e' }],
+      [{ from: 'new_seg1', to: 'new_head', color: '#3b82f6' }, { from: 'new_seg2', to: 'new_head', color: '#3b82f6' }],
+    ],
+    'journal-rebuild': [
+      [{ from: 'tar1', to: 'scan', color: '#4ade80' }, { from: 'tar2', to: 'scan', color: '#4ade80' }, { from: 'tar3', to: 'scan', color: '#4ade80' }],
+      [{ from: 'scan', to: 'root1', color: '#4ade80' }, { from: 'scan', to: 'root2', color: '#4ade80' }, { from: 'scan', to: 'root3', color: '#4ade80' }],
+      [{ from: 'root3', to: 'new_journal', color: '#22c55e' }],
+    ],
   }
   
   const seq = sequences[props.flow] || []
