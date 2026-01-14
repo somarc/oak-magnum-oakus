@@ -231,14 +231,6 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 | Have a backup before any recovery | Attempt recovery without backup |
 | Understand the cause before acting | Panic and run random commands |
 
-## When to Hand Off
-
-| Situation | Hand Off To |
-|-----------|-------------|
-| SNFE during indexing operations | Indexing team — may be index corruption |
-| SNFE on author with DocumentNodeStore | Author persistence team — different recovery |
-| SNFE after content migration | Migration team — may be source data issue |
-
 ## Time Estimates
 
 | Operation | 100GB Repo | 500GB Repo | 1TB Repo |

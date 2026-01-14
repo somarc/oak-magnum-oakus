@@ -75,18 +75,6 @@ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
 - [Sidegrade](/recovery/sidegrade) - Extract accessible content
 - [Pre-Text Extraction](/recovery/pre-text-extraction) - Speed up re-indexing after recovery
 
-## 🔀 When to Hand Off
-
-Not all "Oak problems" are actually Oak problems. Know when to escalate:
-
-| Symptom | Likely Owner | Why |
-|---------|--------------|-----|
-| SNFE during indexing | **Indexing team** | May be Lucene index corruption, not segment |
-| SNFE on author with MongoDB | **Author persistence** | DocumentNodeStore has different recovery |
-| Missing blobs after migration | **Migration team** | Source data or migration tool issue |
-| Namespace modification errors | **Author persistence** | DocStore concern, not segment persistence |
-| OakState0001 conflicts | **Replication team** | Content conflict, not corruption |
-
 ::: info 📅 Last Updated
 Content last reviewed: January 2026 • Oak 1.22.x / AEM 6.5.x (also applicable to AEM 6.5 LTS)
 :::
