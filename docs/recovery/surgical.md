@@ -114,7 +114,7 @@ These indexes use **Apache Tika for binary text extraction** (PDFs, Word docs, v
 - **Orders of magnitude slower** than simple property indexes (100x-1000x)
 - **Example**: 500GB DAM with 100K PDFs = **2-4 weeks** of continuous re-indexing
 
-**MANDATORY**: Use pre-text extraction to salvage existing indexed data from corrupted index. **DO NOT** just delete and re-index naively - you'll regret it for weeks.
+**MANDATORY**: Use [pre-text extraction](/recovery/pre-text-extraction) to salvage existing indexed data from corrupted index. **DO NOT** just delete and re-index naively - you'll regret it for weeks.
 :::
 
 ### When Surgical Removal FAILS ❌

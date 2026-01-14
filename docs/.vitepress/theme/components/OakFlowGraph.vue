@@ -23,7 +23,7 @@ interface Edge {
 }
 
 const props = defineProps<{
-  flow: 'segment-structure' | 'tar-lifecycle' | 'gc-cycle' | 'compaction' | 'checkpoint-pin' | 'recovery-decision' | 'journal-rebuild'
+  flow: 'segment-structure' | 'tar-lifecycle' | 'gc-cycle' | 'compaction' | 'checkpoint-pin' | 'recovery-decision' | 'journal-rebuild' | 'pre-text-extraction'
   height?: number
   interactive?: boolean
 }>()
@@ -54,6 +54,12 @@ const NODE_TYPES: Record<string, { icon: string; color: string }> = {
   SUCCESS: { icon: '✅', color: '#22c55e' },
   FAILURE: { icon: '❌', color: '#ef4444' },
   BACKUP: { icon: '💾', color: '#0ea5e9' },
+  BINARY: { icon: '📁', color: '#f97316' },
+  CSV: { icon: '📋', color: '#06b6d4' },
+  TIKA: { icon: '🔍', color: '#a855f7' },
+  TEXT_STORE: { icon: '📝', color: '#22c55e' },
+  INDEX: { icon: '🔎', color: '#ec4899' },
+  OSGI: { icon: '⚙️', color: '#f59e0b' },
 }
 
 const EDGE_COLORS: Record<string, string> = {
@@ -97,6 +103,9 @@ function initFlow() {
       break
     case 'journal-rebuild':
       initJournalRebuild()
+      break
+    case 'pre-text-extraction':
+      initPreTextExtraction()
       break
   }
 }
@@ -367,6 +376,50 @@ function initJournalRebuild() {
   addEdge('root3', 'new_journal', 'COPY', { label: 'write' })
 }
 
+function initPreTextExtraction() {
+  nodes.value = []
+  edges.value = []
+  
+  // Phase 1: Generate CSV
+  addNode('repo', 'ROOT', 80, 80, { label: 'Repository', description: 'SegmentStore with binaries', radius: 32 })
+  addNode('datastore', 'BINARY', 80, 200, { label: 'DataStore', description: 'FileDataStore or S3', radius: 32 })
+  addNode('tika_gen', 'COMPACTION', 250, 140, { label: 'tika --generate', description: 'Scan repo for binaries' })
+  addNode('csv', 'CSV', 420, 140, { label: 'binary-stats.csv', description: 'List of all binary refs' })
+  
+  // Phase 2: Extract text
+  addNode('tika_extract', 'TIKA', 420, 280, { label: 'tika --extract', description: 'Apache Tika extraction' })
+  addNode('text_store', 'TEXT_STORE', 620, 280, { label: 'Pre-extracted Store', description: './store directory' })
+  
+  // Alternative: Use existing index
+  addNode('existing_idx', 'INDEX', 250, 380, { label: 'Existing Index', description: 'damAssetLucene dump' })
+  addNode('tika_populate', 'COMPACTION', 420, 380, { label: 'tika --populate', description: 'Reuse indexed text' })
+  
+  // Phase 3: Configure OSGi
+  addNode('osgi', 'OSGI', 780, 200, { label: 'OSGi Config', description: 'PreExtractedTextProvider' })
+  addNode('reindex', 'INDEX', 780, 340, { label: 'Re-index', description: 'Fast re-indexing' })
+  addNode('success', 'SUCCESS', 900, 270, { label: 'Complete', description: 'Index rebuilt' })
+  
+  // Edges - Phase 1
+  addEdge('repo', 'tika_gen', 'DATA', { label: 'scan' })
+  addEdge('datastore', 'tika_gen', 'DATA')
+  addEdge('tika_gen', 'csv', 'COPY', { label: 'write' })
+  
+  // Edges - Phase 2 (Tika path)
+  addEdge('csv', 'tika_extract', 'DATA', { label: 'read' })
+  addEdge('datastore', 'tika_extract', 'DATA', { label: 'binaries' })
+  addEdge('tika_extract', 'text_store', 'COPY', { label: 'extract' })
+  
+  // Edges - Phase 2 (Index dump path)
+  addEdge('existing_idx', 'tika_populate', 'DATA', { label: 'dump' })
+  addEdge('csv', 'tika_populate', 'DATA')
+  addEdge('tika_populate', 'text_store', 'COPY', { label: 'populate' })
+  
+  // Edges - Phase 3
+  addEdge('text_store', 'osgi', 'CONTROL', { label: 'configure' })
+  addEdge('osgi', 'reindex', 'CONTROL', { label: 'enable' })
+  addEdge('reindex', 'success', 'DATA')
+}
+
 function getEdgePath(edge: Edge): string {
   const fromNode = nodes.value.find(n => n.id === edge.from)
   const toNode = nodes.value.find(n => n.id === edge.to)
@@ -472,6 +525,22 @@ async function playAnimation() {
       [{ from: 'tar1', to: 'scan', color: '#4ade80' }, { from: 'tar2', to: 'scan', color: '#4ade80' }, { from: 'tar3', to: 'scan', color: '#4ade80' }],
       [{ from: 'scan', to: 'root1', color: '#4ade80' }, { from: 'scan', to: 'root2', color: '#4ade80' }, { from: 'scan', to: 'root3', color: '#4ade80' }],
       [{ from: 'root3', to: 'new_journal', color: '#22c55e' }],
+    ],
+    'pre-text-extraction': [
+      // Phase 1: Generate CSV
+      [{ from: 'repo', to: 'tika_gen', color: '#4ade80' }, { from: 'datastore', to: 'tika_gen', color: '#f97316' }],
+      [{ from: 'tika_gen', to: 'csv', color: '#06b6d4' }],
+      // Phase 2: Extract (show both paths)
+      [{ from: 'csv', to: 'tika_extract', color: '#06b6d4' }],
+      [{ from: 'datastore', to: 'tika_extract', color: '#f97316' }],
+      [{ from: 'tika_extract', to: 'text_store', color: '#22c55e' }],
+      // Alternative path
+      [{ from: 'existing_idx', to: 'tika_populate', color: '#ec4899' }],
+      [{ from: 'tika_populate', to: 'text_store', color: '#22c55e' }],
+      // Phase 3: Configure
+      [{ from: 'text_store', to: 'osgi', color: '#8b5cf6' }],
+      [{ from: 'osgi', to: 'reindex', color: '#8b5cf6' }],
+      [{ from: 'reindex', to: 'success', color: '#22c55e' }],
     ],
   }
   

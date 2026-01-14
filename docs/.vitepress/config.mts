@@ -66,6 +66,7 @@ export default withMermaid(
               { text: 'Surgical Removal', link: '/recovery/surgical' },
               { text: 'Compaction', link: '/recovery/compaction' },
               { text: 'Sidegrade', link: '/recovery/sidegrade' },
+              { text: 'Pre-Text Extraction', link: '/recovery/pre-text-extraction' },
             ]
           },
           {
