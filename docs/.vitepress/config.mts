@@ -77,6 +77,7 @@ export default withMermaid(
               { text: 'Disk Bloat', link: '/checkpoints/disk-bloat' },
               { text: 'Async Indexing', link: '/checkpoints/async-indexing' },
               { text: 'Death Loop', link: '/checkpoints/death-loop' },
+              { text: 'Checkpoint Advancement', link: '/checkpoints/checkpoint-advancement' },
             ]
           },
           {

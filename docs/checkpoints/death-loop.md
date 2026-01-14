@@ -135,6 +135,12 @@ Configure reasonable timeouts to prevent infinite loops:
 oak.async.indexer.maxTime=3600000  # 1 hour max
 ```
 
+## When Standard Fixes Don't Work
+
+If you've tried the above and indexing still fails with "0 missing blobs" but repeated `DataStoreException` errors, you may have **invisible missing blobs** - blobs that were deleted from DataStore but are still referenced in old segments pinned by checkpoints.
+
+**See**: [Checkpoint Advancement](/checkpoints/checkpoint-advancement) for the advanced procedure to skip the problematic historical delta.
+
 ## Key Takeaways
 
 ::: tip Remember
@@ -143,4 +149,5 @@ oak.async.indexer.maxTime=3600000  # 1 hour max
 3. **Disk grows rapidly** - Can fill disk in hours/days
 4. **Fix root cause** - Don't just clear symptoms
 5. **Monitor regularly** - Catch early before disk fills
+6. **"0 missing blobs" can still fail** - See [Checkpoint Advancement](/checkpoints/checkpoint-advancement)
 :::
