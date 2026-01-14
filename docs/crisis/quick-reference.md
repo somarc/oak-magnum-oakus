@@ -52,8 +52,13 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 | `oak-upgrade` sidegrade | ~4-6 hours |
 | Backup restore | ~1-2 hours |
 
-## 🆘 Emergency Contacts
+## 🆘 Emergency Contact
 
-- **Adobe Support**: For AEM Cloud Service / AMS customers
-- **Apache Oak Mailing List**: users@jackrabbit.apache.org
-- **Stack Overflow**: Tag `apache-oak` or `aem`
+**Adobe Support** - Your only realistic option for crisis response.
+
+- AEM Cloud Service / AMS customers: Open a P1 support ticket
+- On-premise customers: Contact your Adobe support representative
+
+::: warning Reality Check
+The Apache mailing lists are not responsive for crisis situations. Stack Overflow is effectively dead for niche technical topics in the age of AI. **Adobe Support is your lifeline.**
+:::
