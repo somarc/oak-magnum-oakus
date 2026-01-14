@@ -99,8 +99,8 @@ Originally authored for Adobe Customer Support, The Magnum OAKus represents thou
 | ✅ Applicable | ❌ Not Applicable |
 |--------------|------------------|
 | SegmentStore (TarMK) | AEMaaCS |
-| DocumentNodeStore (MongoMK/RDB) | Cloud-native persistence |
-| Direct filesystem access | Abstracted repository layer |
+| Direct filesystem access | DocumentNodeStore (MongoMK/RDB) |
+| | Abstracted repository layer |
 
 **Version Context:**
 - Oak 1.22.x is the Oak version for AEM 6.5.x (Java 8/11)
