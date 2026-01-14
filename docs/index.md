@@ -17,7 +17,7 @@ hero:
       link: /architecture/
     - theme: alt
       text: View on GitHub
-      link: https://github.com/somarc/jackrabbit-oak
+      link: https://github.com/somarc/oak-magnum-oakus
 
 features:
   - icon: 🚨
