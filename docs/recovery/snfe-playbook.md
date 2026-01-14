@@ -262,5 +262,5 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 :::
 
 ::: info 📅 Last Updated
-Content last reviewed: January 2026 • Oak 1.60.x / AEM 6.5.21
+Content last reviewed: January 2026 • Oak 1.22.x / AEM 6.5.x (also applicable to AEM 6.5 LTS)
 :::

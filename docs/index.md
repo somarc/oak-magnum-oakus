@@ -114,6 +114,6 @@ Originally authored for Adobe Customer Support, The Magnum OAKus represents thou
 - **Time-bounded decisions** - When in doubt, restore from backup
 
 ::: info 📅 Last Updated
-Content last reviewed: January 2026 • Oak 1.60.x / AEM 6.5.21
+Content last reviewed: January 2026 • Oak 1.22.x / AEM 6.5.x (also applicable to AEM 6.5 LTS)
 :::
 
