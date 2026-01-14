@@ -79,10 +79,14 @@ See /tmp/count-nodes-snfe-1704963300000.log
 | 50 GB | ~1 hour |
 | 100 GB | ~2 hours |
 | 500 GB | ~6-8 hours |
-| 1 TB+ | ~12-24 hours |
+| 1 TB | ~12-24 hours |
+| 2 TB | ~24-48 hours (multi-day) |
+| 3 TB+ | ~48-96 hours (week-scale) |
 
-::: warning ⚠️ Time Estimates Scale
-These times are **I/O bound** and scale with repository size. A 1TB repository can take **10-20x longer** than a 100GB repository. **There is no way to speed up these operations.**
+::: warning ⚠️ Time Estimates Scale With Repository Size
+These times are **I/O bound** - `count-nodes` must traverse every node in the repository tree. There is no way to parallelize or speed up these operations.
+
+**Production reality**: On-premise AEM installations commonly accumulate **500GB-2TB** segment stores. Running `count-nodes` on a 2TB repository is a **multi-day operation**.
 :::
 
 ## Step 2: Review the Log

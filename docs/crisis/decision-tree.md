@@ -28,7 +28,7 @@ flowchart TD
     
     GOOD_REV --> RECOVERY_PATH{Choose recovery path}
     
-    RECOVERY_PATH -->|Fast, some data loss| RECOVER_JOURNAL[recover-journal]
+    RECOVERY_PATH -->|Simpler, some data loss| RECOVER_JOURNAL[recover-journal]
     RECOVERY_PATH -->|Surgical, preserve more| SURGICAL[count-nodes + remove-nodes]
     
     NO_REV --> LAST_RESORT{Last resort options}
@@ -93,17 +93,21 @@ flowchart TD
 
 ### 4. Recovery Paths
 
-**recover-journal** (Fast):
-- Rebuilds journal from segments
+**recover-journal** (Simpler):
+- Rebuilds journal by traversing all segments
 - May lose recent changes
-- ~30 minutes
+- ⏱️ **Time scales with repository size**: Must traverse entire segment store
+  - Small repos (< 100GB): ~30 minutes
+  - Medium repos (100-500GB): 1-4 hours
+  - Large repos (500GB-1TB): 4-12 hours
+  - Very large repos (> 1TB): 12-48+ hours
 
 **Surgical removal** (Preserve more):
 - Find corrupted paths with `count-nodes`
 - Remove only affected content
-- ~2-4 hours
+- ⏱️ Additional 2-4 hours on top of diagnosis time
 
 **Sidegrade** (Last resort):
 - Extract all accessible content to new repo
 - Loses corrupted paths
-- ~4-6 hours
+- ⏱️ Time scales with content volume (typically 4-12+ hours)

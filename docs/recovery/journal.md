@@ -71,11 +71,15 @@ $ ./crx-quickstart/bin/start
 | 10 GB | ~10 minutes |
 | 50 GB | ~20 minutes |
 | 100 GB | ~30-45 minutes |
-| 500 GB | ~2-3 hours |
-| 1 TB+ | ~6-12 hours |
+| 500 GB | ~2-4 hours |
+| 1 TB | ~6-12 hours |
+| 2 TB | ~24-48 hours |
+| 3 TB+ | ~48-96 hours (multi-day) |
 
-::: warning ⚠️ Time Estimates Scale
-These times are **I/O bound** and scale with repository size. A 1TB repository can take **10-20x longer** than a 100GB repository. **There is no way to speed up these operations.**
+::: warning ⚠️ Time Estimates Scale With Repository Size
+These times are **I/O bound** - the operation must traverse every segment in every TAR file. There is no way to parallelize or speed up these operations.
+
+**Production reality**: On-premise AEM installations commonly accumulate **500GB-2TB** segment stores over years of operation. A 2TB repository recovery is a **multi-day operation** - plan maintenance windows accordingly.
 :::
 
 ## Limitations

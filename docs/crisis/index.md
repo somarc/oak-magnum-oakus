@@ -22,6 +22,21 @@ Follow the boxes in order. Check them off as you go. **DO NOT SKIP BOXES.**
 
 ::: warning ⏱️ TIME WARNING
 All time estimates assume you know what you're doing. If you're uncertain, stressed, or reading this for the first time during an incident: **multiply all times by 3-5x**. When in doubt, restore from backup.
+
+**Know your repository size FIRST** - it determines everything:
+```bash
+du -sh crx-quickstart/repository/segmentstore/
+```
+
+| Repository Size | Recovery Reality |
+|-----------------|------------------|
+| < 100GB | Hours - single shift |
+| 100-500GB | Half-day to full day |
+| 500GB-1TB | Multi-day (12-48 hours) |
+| 1-2TB | Multi-day (24-96 hours) |
+| 2TB+ | Week-scale operations |
+
+On-premise AEM installations commonly have **500GB-2TB** segment stores.
 :::
 
 ## ✅ Step 1: Do You Have a Backup?
@@ -113,7 +128,7 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 
 <OakFlowGraph flow="recovery-decision" :height="400" />
 
-### Option A: Fast Rollback (loses recent changes, SAFE)
+### Option A: Journal Recovery (simpler procedure, loses recent changes, SAFE)
 
 ```bash
 java -jar oak-run-*.jar recover-journal /path/to/segmentstore
@@ -208,17 +223,33 @@ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
 
 ---
 
-## ⏱️ Time Estimates (100GB Repository on SSD)
+## ⏱️ Time Estimates
+
+::: danger ⚠️ CRITICAL: Time Scales With Repository Size
+All oak-run operations are **I/O bound** and must traverse the entire segment store. There is no way to parallelize or speed up these operations.
+:::
+
+### Baseline: 100GB Repository (SSD)
 
 | Operation | Time Estimate | Notes |
 |-----------|--------------|-------|
 | `oak-run check` | 15 minutes | Faster if corruption found early |
-| `oak-run recover-journal` | 30 minutes | Rebuilds journal, doesn't copy data |
+| `oak-run recover-journal` | 30-45 minutes | Traverses all segments |
 | `count-nodes` (full scan) | 2 hours | Tests every node + blob |
 | `remove-nodes` | 10-30 minutes | Depends on paths to remove |
 | `oak-upgrade` sidegrade | 4-6 hours | Copies all accessible content |
 | Backup restore | 1-2 hours | Depends on network/storage speed |
 
-::: danger ⚠️ CRITICAL
-These times scale with repository size. A 1TB repository can take 10-20x longer. **There is no way to speed up these operations.**
+### Production Reality: Scaling
+
+| Repository Size | Multiply Baseline By | Example: recover-journal |
+|-----------------|---------------------|--------------------------|
+| 100GB | 1x | ~30-45 min |
+| 500GB | 4-6x | ~2-4 hours |
+| 1TB | 10-15x | ~6-12 hours |
+| 2TB | 20-30x | ~24-48 hours |
+| 3TB+ | 40-50x | ~48-96 hours (multi-day) |
+
+::: tip On-Prem Reality
+Production on-premise AEM installations commonly have **500GB-2TB** segment stores after years of content accumulation. A 2TB repository recovery is a **multi-day operation**.
 :::

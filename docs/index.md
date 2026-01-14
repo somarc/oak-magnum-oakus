@@ -80,6 +80,27 @@ This guide requires direct filesystem access to the repository.
 >
 > **If you have a recent, tested backup: RESTORE IT NOW.** Stop reading. Don't run diagnostics. Every minute spent "investigating" is wasted time when you have a guaranteed good state.
 
+## 📏 Know Your Repository Size
+
+::: warning Production Reality
+On-premise AEM installations commonly accumulate **500GB to 2TB+** segment stores over years of operation. Time estimates throughout this guide scale dramatically with repository size.
+
+| Repository Size | Recovery Reality |
+|-----------------|------------------|
+| < 100GB | Hours - manageable in a single shift |
+| 100-500GB | Half-day to full day operations |
+| 500GB-1TB | Multi-day operations (12-48 hours) |
+| 1-2TB | Multi-day operations (24-96 hours) |
+| 2TB+ | Week-scale operations - plan accordingly |
+
+**Before estimating recovery time**, determine your segment store size:
+```bash
+du -sh crx-quickstart/repository/segmentstore/
+```
+
+All oak-run operations are **I/O bound** and traverse the entire segment store. There is no way to parallelize or speed up these operations.
+:::
+
 ## 🚀 Quick Navigation
 
 | Scenario | Start Here |

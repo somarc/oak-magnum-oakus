@@ -221,10 +221,14 @@ In **99.9% of real-world scenarios**, standby has the same corruption as primary
 | 50 GB | ~1-2 hours |
 | 100 GB | ~4-6 hours |
 | 500 GB | ~12-24 hours |
-| 1 TB+ | ~24-48 hours |
+| 1 TB | ~24-48 hours |
+| 2 TB | ~48-96 hours (multi-day) |
+| 3 TB+ | ~96-168 hours (week-scale) |
 
-::: warning ⚠️ Time Estimates Scale
-These times are **I/O bound** and scale with repository size. A 1TB repository can take **10-20x longer** than a 100GB repository. **There is no way to speed up these operations.**
+::: warning ⚠️ Time Estimates Scale With Repository Size
+These times are **I/O bound** - sidegrade must read every accessible node from the source and write to the destination. There is no way to parallelize or speed up these operations.
+
+**Production reality**: On-premise AEM installations commonly accumulate **500GB-2TB** segment stores. A 2TB sidegrade is a **multi-day to week-scale operation**.
 
 **First-time operators** without deep Oak knowledge should expect the **upper end** of timeline estimates.
 :::

@@ -291,10 +291,14 @@ Timeline of Death:
 | 50 GB | ~10 minutes |
 | 100 GB | ~15 minutes |
 | 500 GB | ~45 minutes |
-| 1 TB+ | ~2 hours |
+| 1 TB | ~1.5-2 hours |
+| 2 TB | ~3-4 hours |
+| 3 TB+ | ~6-8 hours |
 
-::: warning ⚠️ Time Estimates Scale
-These times are **I/O bound** and scale with repository size. Check is faster than most operations because it stops early when corruption is found.
+::: warning ⚠️ Time Estimates Scale With Repository Size
+These times are **I/O bound** and scale with repository size. `check` is faster than most operations because it stops early when corruption is found - but on a healthy repository, it must traverse all journal entries.
+
+**Production reality**: On-premise AEM installations commonly have **500GB-2TB** segment stores. Even the diagnostic `check` command can take hours on large repositories.
 :::
 
 ## Key Takeaways
