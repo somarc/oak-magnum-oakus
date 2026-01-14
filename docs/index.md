@@ -103,9 +103,10 @@ Originally authored for Adobe Customer Support, The Magnum OAKus represents thou
 | Direct filesystem access | Abstracted repository layer |
 
 **Version Context:**
-- Oak 1.22+ (AEM 6.4+) through Oak 1.60+ (AEM 6.5.20+)
-- Procedures tested primarily on AEM 6.5.x with Oak 1.40-1.60
-- Some behaviors differ in older Oak versions — check release notes
+- Oak 1.22.x is the Oak version for AEM 6.5.x (Java 8/11)
+- Oak 1.40+ / 1.60+ corresponds to AEM 6.5 LTS (Java 17/21) — closely follows apache-jackrabbit-oak for AEMaaCS
+- Procedures tested primarily on AEM 6.5.x with Oak 1.22.x
+- Some behaviors differ between Oak versions — check release notes
 
 **Philosophy:**
 - **Backup-first** - The only guaranteed recovery method
