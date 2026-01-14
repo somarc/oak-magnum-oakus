@@ -54,11 +54,7 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 
 ## 🆘 Emergency Contact
 
-**Adobe Support** - Your only realistic option for crisis response.
+**Adobe Support**
 
 - AEM Cloud Service / AMS customers: Open a P1 support ticket
 - On-premise customers: Contact your Adobe support representative
-
-::: warning Reality Check
-The Apache mailing lists are not responsive for crisis situations. Stack Overflow is effectively dead for niche technical topics in the age of AI. **Adobe Support is your lifeline.**
-:::
