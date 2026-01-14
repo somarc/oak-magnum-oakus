@@ -1,163 +1,257 @@
 # 🔄 Sidegrade (oak-upgrade)
 
-Sidegrade extracts all **accessible content** from a corrupted repository into a fresh, clean repository. It's the last resort when other recovery methods fail.
+Sidegrade uses `oak-upgrade` to extract accessible content from a corrupted repository into a new, clean repository. This is the **last resort** when other recovery options fail.
 
 ## When to Use
 
-- `recover-journal` found no valid revisions
+- `oak-run check` finds no good revision
+- `oak-run recover-journal` fails
 - Critical paths are corrupted (can't use surgical removal)
-- You want to salvage whatever is accessible
-- Other recovery methods have failed
+- You need to salvage whatever content is accessible
 
 ## Basic Usage
 
 ```bash
-$ java -jar oak-upgrade-*.jar \
-    --copy-binaries \
+$ java -jar oak-upgrade-*.jar upgrade \
     /path/to/corrupted/segmentstore \
     /path/to/new/segmentstore
 ```
+
+::: warning Different JAR
+This uses `oak-upgrade-*.jar`, NOT `oak-run-*.jar`. They are separate tools.
+:::
 
 ## What It Does
 
 ```mermaid
 flowchart LR
-    A[Corrupted Repo] --> B[oak-upgrade]
-    B --> C[Read accessible nodes]
-    C --> D[Skip corrupted paths]
-    D --> E[Write to new repo]
-    E --> F[Clean Repository]
+    A[Corrupted Repo] --> B[Traverse from HEAD]
+    B --> C[Copy accessible nodes]
+    C --> D[Skip corrupted nodes]
+    D --> E[New Clean Repo]
 ```
 
-1. **Opens source** - Corrupted repository (read-only)
-2. **Traverses tree** - Reads all accessible nodes
-3. **Skips corruption** - Logs and skips unreadable paths
-4. **Writes to target** - Creates clean new repository
+1. **Attempts to traverse from HEAD**
+2. **Copies every accessible node** to new repository
+3. **Skips nodes** that throw `SegmentNotFoundException`
+4. **Results in a new, smaller repository** with only recoverable content
 
-## Command Options
+## Example
 
 ```bash
-# Basic sidegrade
-oak-upgrade --copy-binaries src dst
+$ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
+    /path/to/corrupted /path/to/recovered
 
-# Include specific paths only
-oak-upgrade --copy-binaries \
-    --include-paths /content,/apps,/conf \
-    src dst
-
-# Exclude paths
-oak-upgrade --copy-binaries \
-    --exclude-paths /var/audit,/tmp \
-    src dst
-
-# Merge into existing repository
-oak-upgrade --copy-binaries \
-    --merge-paths /content \
-    src dst
-```
-
-## Example Output
-
-```
-Starting migration...
-Source: /path/to/corrupted/segmentstore
-Target: /path/to/new/segmentstore
-
-Migrating /content... OK
-Migrating /content/dam... OK
-Migrating /content/dam/2024... 
-  WARNING: SegmentNotFoundException at /content/dam/2024/Q3
-  Skipping corrupted subtree
-Migrating /content/dam/2024/Q4... OK
-Migrating /apps... OK
-Migrating /conf... OK
+Migrating repository...
+Copied: /
+Copied: /content
+Copied: /content/we-retail
+ERROR: Skipping /content/corrupted: SegmentNotFoundException
+Copied: /apps
 ...
-
-Migration completed.
-Migrated: 45,231 nodes
-Skipped: 127 nodes (corrupted)
-See migration.log for details
+Migration complete: 85% of nodes recovered
 ```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--copy-binaries` | Copy binaries to new DataStore (recommended) |
+| `--include-paths` | Only migrate specific paths |
+| `--exclude-paths` | Skip specific paths |
+| `--merge-paths` | Merge into existing repository |
+
+### Selective Migration
+
+```bash
+# Only migrate /content and /apps
+$ java -jar oak-upgrade-*.jar upgrade \
+    --include-paths=/content,/apps \
+    /path/to/corrupted /path/to/new
+```
+
+### Merge with Old Backup
+
+If you have an old backup and want to merge recent accessible content:
+
+```bash
+# 1. Restore old backup first
+# (DevOps restore operation)
+
+# 2. Merge accessible recent content from corrupted repo
+$ java -jar oak-upgrade-*.jar upgrade \
+    --include-paths=/content,/home \
+    --merge-paths=/content,/home \
+    --src=segment-tar:/path/to/corrupted/segmentstore \
+    --dst=segment-tar:/path/to/restored/segmentstore
+
+# Result: Old backup + recent changes (minus corrupted paths)
+```
+
+## Standby Recovery: Why It Rarely Works
+
+::: danger ⚠️ REALITY CHECK
+Standby recovery is **rarely viable** in practice.
+:::
+
+### The Problem with Cold Standby
+
+- Cold standbys typically **replicate corruption** from primary
+- By the time corruption is discovered, standby already has it
+- Standby sync happens continuously (usually every few seconds)
+- Corruption on primary → quickly replicated to standby
+
+### When Standby MIGHT Work (Extremely Rare)
+
+1. **Standby sync was disabled/broken** before corruption occurred
+   - Network failure prevented sync for extended period
+   - Standby deliberately paused for maintenance (hours/days)
+   - **Reality**: Operations teams notice and fix sync issues immediately
+
+2. **Very recent corruption** detected within seconds
+   - Corruption just happened seconds ago
+   - Standby hasn't synced yet (sync interval typically 5-30 seconds)
+   - **Reality**: Corruption detection takes minutes/hours, standby already has it
+
+3. **"Standby" from different time period**
+   - Old standby that was intentionally kept out of sync
+   - **Reality**: This is a backup, not a standby - use backup restore procedures
+
+### Bottom Line
+
+In **99.9% of real-world scenarios**, standby has the same corruption as primary. **Plan for backup restore, not standby recovery.**
+
+## Success Conditions
+
+- ✅ At least some content is accessible
+- ✅ Corruption is localized (e.g., only `/content/dam/corrupted`)
+- ✅ Critical paths (`/apps`, `/libs`, `/content`) are mostly intact
+
+## Failure Modes
+
+- ❌ If HEAD itself is inaccessible (can't even start traversal)
+- ❌ If corruption affects most of the repository
+- ❌ Content loss is likely - you get what you get
 
 ## Time Estimates
 
 | Repository Size | Approximate Time |
 |-----------------|------------------|
 | 10 GB | ~30 minutes |
-| 50 GB | ~2 hours |
+| 50 GB | ~1-2 hours |
 | 100 GB | ~4-6 hours |
 | 500 GB | ~12-24 hours |
+| 1 TB+ | ~24-48 hours |
+
+::: warning ⚠️ Time Estimates Scale
+These times are **I/O bound** and scale with repository size. A 1TB repository can take **10-20x longer** than a 100GB repository. **There is no way to speed up these operations.**
+
+**First-time operators** without deep Oak knowledge should expect the **upper end** of timeline estimates.
+:::
 
 ## After Sidegrade
 
-### 1. Verify New Repository
+1. **Verify new repository**
+   ```bash
+   $ java -jar oak-run-*.jar check /path/to/new/segmentstore
+   ```
+
+2. **Assess what was lost**
+   - Compare node counts
+   - Check critical paths
+   - Verify functionality
+
+3. **Replace old repository**
+   ```bash
+   $ mv /path/to/old/segmentstore /path/to/old/segmentstore.corrupted
+   $ mv /path/to/new/segmentstore /path/to/old/segmentstore
+   ```
+
+4. **Start AEM**
+   ```bash
+   $ ./crx-quickstart/bin/start
+   ```
+
+## Backup Timing: The #1 DevOps Mistake
+
+::: danger ⚠️ CRITICAL: Stop AEM Before Backup
+Taking backups/snapshots while AEM is running captures **inconsistent state**.
+:::
+
+### WRONG: Backup While Running
 
 ```bash
-$ java -jar oak-run-*.jar check /path/to/new/segmentstore
+# AEM is running, actively writing to disk
+$ tar -czf aem-backup.tar.gz crx-quickstart/repository/
+# OR
+$ aws ec2 create-snapshot --volume-id vol-xxx  # VM still running
 ```
 
-### 2. Replace Old Repository
+**Why this fails:**
+- ❌ Backup captures **partial TAR files** (mid-write)
+- ❌ Backup captures **inconsistent state** (some TARs updated, others not)
+- ❌ Backup contains **corrupted journal.log** (truncated mid-write)
+- ❌ Restore will fail with SegmentNotFoundException
+
+### RIGHT: Stop AEM, Then Backup
 
 ```bash
-# Backup corrupted repo (just in case)
-$ mv segmentstore segmentstore.corrupted
+# 1. Stop AEM cleanly
+$ ./crx-quickstart/bin/stop
+# Wait for process to fully terminate
 
-# Use new repo
-$ mv new-segmentstore segmentstore
+# 2. VERIFY AEM is stopped
+$ ps aux | grep java
+# No AEM process should be running
+
+# 3. NOW take backup (filesystem is quiescent)
+$ tar -czf aem-backup.tar.gz crx-quickstart/repository/
+# OR
+$ aws ec2 create-snapshot --volume-id vol-xxx
 ```
 
-### 3. Rebuild Indexes
-
-After sidegrade, Lucene indexes need rebuilding:
+### Test Your Backup BEFORE You Need It
 
 ```bash
-# Start AEM
-# Go to: /system/console/jmx
-# Find: IndexStatsMBean
-# Execute: reindex
+# Don't wait for a P1 to discover your backup is corrupt
+$ java -jar oak-run-*.jar check /path/to/backup/segmentstore
+
+# ✅ "Latest good revision..." = Backup is good
+# ❌ SegmentNotFoundException = Backup is corrupt (was taken while running)
 ```
 
-Or delete index files to trigger rebuild:
+### Backup Validation Checklist
 
-```bash
-$ rm -rf crx-quickstart/repository/index/*
-```
+1. ✅ AEM was stopped when backup taken
+2. ✅ Backup timestamp is AFTER AEM stop time
+3. ✅ `oak-run check` passes on backup segmentstore
+4. ✅ Backup restore tested successfully (at least once)
 
-## Merge Paths
+## If Sidegrade Fails
 
-If you have an old backup and want to merge recent accessible content:
+If sidegrade can't extract any content:
 
-```bash
-# 1. Restore old backup
-# 2. Merge accessible recent content
-$ java -jar oak-upgrade-*.jar \
-    --copy-binaries \
-    --merge-paths /content,/home \
-    /path/to/corrupted \
-    /path/to/restored-backup
-```
+1. **Restore from backup** - Even an old backup is better than nothing
+2. **Accept total data loss** - Rebuild from scratch
+3. **Document everything** - Root cause analysis for prevention
 
-## Limitations
+::: danger Total Data Loss
+If you're in this scenario with no backup, there is **no Oak magic** that will save you. The data is gone.
 
-Sidegrade **cannot**:
-- Recover corrupted data (it's skipped)
-- Preserve exact timestamps (some metadata may change)
-- Migrate custom node types automatically
-- Handle very large repositories quickly
-
-## What Gets Lost
-
-- **Corrupted paths** - Logged but not migrated
-- **Unreachable content** - Anything under corrupted nodes
-- **Some metadata** - Depending on corruption extent
-- **Indexes** - Must be rebuilt
+**Your only options:**
+1. Accept the loss - Rebuild from scratch
+2. Communicate upward immediately
+3. Implement backup strategy so this never happens again
+:::
 
 ## Key Takeaways
 
 ::: tip Remember
-1. **Last resort** - Use when other methods fail
-2. **Extracts accessible content** - Skips corruption
-3. **Creates clean repo** - Fresh start
-4. **Rebuild indexes** - Required after migration
-5. **Document losses** - Review migration log for skipped paths
+1. **Last resort** - Use only when other recovery fails
+2. **Content loss likely** - You get what's accessible
+3. **Different JAR** - Uses `oak-upgrade`, not `oak-run`
+4. **Standby rarely helps** - It usually has the same corruption
+5. **Stop AEM before backup** - Running backups capture inconsistent state
+6. **Test backups** - Run `oak-run check` on backup before you need it
+7. **Time scales with size** - 1TB = 10-20x longer than 100GB
 :::

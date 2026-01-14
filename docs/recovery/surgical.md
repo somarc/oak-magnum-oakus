@@ -21,7 +21,7 @@ Use the `count-nodes` command in oak-run console:
 $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 
 # In the console:
-> :count-nodes
+> :count-nodes deep analysis
 ```
 
 ### What count-nodes Does
@@ -56,6 +56,11 @@ See /tmp/count-nodes-snfe-1704963300000.log
 | 50 GB | ~1 hour |
 | 100 GB | ~2 hours |
 | 500 GB | ~6-8 hours |
+| 1 TB+ | ~12-24 hours |
+
+::: warning ⚠️ Time Estimates Scale
+These times are **I/O bound** and scale with repository size. A 1TB repository can take **10-20x longer** than a 100GB repository. **There is no way to speed up these operations.**
+:::
 
 ## Step 2: Review the Log
 
@@ -67,20 +72,150 @@ $ cat /tmp/count-nodes-snfe-*.log
 /var/audit/2024/01/15/corrupted-entry
 ```
 
-### Critical Path Check
+## 🚨 CRITICAL: Surgical Removal Limitations
 
-::: danger ⚠️ STOP if you see these paths:
-```
-/oak:index/uuid
-/oak:index/nodetype
-/jcr:system
-/rep:security
-/home/users/system
-/libs
-```
-These are **critical system paths**. Removing them will brick the repository.
-If these are corrupted, you must restore from backup or use sidegrade.
+**`count-nodes` + `remove-nodes` is NOT a guarantee and NOT always viable!**
+
+### When Surgical Removal Works ✅
+
+Corrupted paths that are **non-critical and isolatable**:
+
+| Path | Safe to Remove? | Notes |
+|------|-----------------|-------|
+| `/content/dam/corrupted-asset` | ✅ Yes | Individual DAM assets |
+| `/content/site/corrupted-page` | ✅ Yes | Specific pages or subtrees |
+| `/var/audit/corrupted-logs` | ✅ Yes | Audit logs, workflow instances |
+| `/apps/myproject` | ✅ Yes | Custom code, redeploy via CI/CD |
+| `/jcr:system/jcr:versionStorage/abc123` | ✅ Yes | Version history for one node only |
+| `/home/users/a/ab/abc/user@example.com` | ✅ Yes | Regular user profile (non-system) |
+| `/home/groups/g/gr/group/content-authors` | ✅ Yes | Regular group (non-system) |
+
+### Lucene Index Nodes (CRITICAL DISTINCTION)
+
+::: danger ⚠️ CRITICAL DISTINCTION - Lucene Index Nodes
+- `/oak:index/damAssetLucene` **(index definition)** - **DO NOT DELETE** - Contains index configuration
+- `/oak:index/damAssetLucene/:data` **(hidden index data)** - **Safe to delete** - Can be rebuilt
+- `/oak:index/damAssetLucene/:suggest-data` **(hidden suggestion data)** - **Safe to delete** - Can be rebuilt
 :::
+
+| Path | Safe to Remove? | Notes |
+|------|-----------------|-------|
+| `/oak:index/damAssetLucene/:data` | ✅ Yes | Hidden index data, can be rebuilt |
+| `/oak:index/cqPageLucene/:suggest-data` | ✅ Yes | Hidden suggestion data, can be rebuilt |
+| `/oak:index/damAssetLucene` | ⚠️ **RISKY** | Index definition - deleting loses configuration |
+
+### 🔥 CRITICAL WARNING - Full-Text Indexes (damAssetLucene, lucene)
+
+::: danger Full-Text Index Re-indexing = WEEKS TO MONTHS of IO HELL
+These indexes use **Apache Tika for binary text extraction** (PDFs, Word docs, videos, etc.)
+
+**YES, you CAN remove `:data` nodes** - but at **MASSIVE IO COST**:
+- Re-indexing from scratch = **WEEKS TO MONTHS** on large DAM repositories
+- **Orders of magnitude slower** than simple property indexes (100x-1000x)
+- **Example**: 500GB DAM with 100K PDFs = **2-4 weeks** of continuous re-indexing
+
+**MANDATORY**: Use pre-text extraction to salvage existing indexed data from corrupted index. **DO NOT** just delete and re-index naively - you'll regret it for weeks.
+:::
+
+### When Surgical Removal FAILS ❌
+
+Corrupted paths that are **critical to AEM/Oak operation**:
+
+#### Property Indexes (Synchronous - AEM Won't Start if Corrupted)
+
+Property indexes are **synchronous** - they update immediately on every write. Oak/AEM **validates these indexes on startup** and will **refuse to start** if they're corrupted or missing.
+
+| Path | Why Critical | Impact |
+|------|--------------|--------|
+| `/oak:index/uuid` | Maps JCR UUIDs to node paths | AEM cannot start - UUID lookups fail |
+| `/oak:index/nodetype` | Indexes `jcr:primaryType` and `jcr:mixinTypes` | AEM cannot start - node type validation fails |
+| `/oak:index/counter` | Tracks global counters | May prevent AEM startup |
+
+**Why Property Indexes are Critical:**
+```
+Property Index Characteristics:
+1. Synchronous updates - every write immediately updates index
+2. Validated on startup - Oak checks integrity before allowing access
+3. Used by core Oak APIs - UUID lookups, node type queries
+4. Cannot be disabled - required for JCR specification compliance
+
+Startup Sequence:
+1. Oak opens FileStore
+2. Oak validates property indexes (uuid, nodetype, counter)
+3. If validation fails → Oak refuses to start
+4. If segments missing → validation fails → AEM won't start
+```
+
+**Contrast with Lucene Indexes (Asynchronous):**
+- Lucene indexes (`/oak:index/damAssetLucene`, `/oak:index/cqPageLucene`) are **asynchronous**
+- Updated in background by async indexing threads
+- Corruption doesn't prevent AEM startup (indexing lane just fails)
+- Can be deleted and rebuilt via re-indexing
+- **NOT validated on startup** - AEM starts even if Lucene indexes corrupted
+
+#### Other Critical Paths
+
+| Path | Why Critical | Impact |
+|------|--------------|--------|
+| `/jcr:system/jcr:nodeTypes` | Node type definitions | Repository unusable |
+| `/jcr:system/jcr:namespaces` | Namespace registry | Repository unusable |
+| `/rep:security` | ACLs, users, groups, permissions | AEM cannot start |
+| `/home/users/system/*/admin` | Admin user account | AEM unusable |
+| `/home/users/system/*/authentication-service` | Authentication service user | Bundles fail to initialize |
+| `/home/users/system/*/replication-service` | Replication service user | Replication fails |
+| `/home/groups/*/administrators` | Administrators group | Admin access broken |
+
+#### `/libs` Corruption - Special Case
+
+If `/libs` paths are corrupted but AEM can still start:
+
+**Option 1: Sidegrade from Vanilla Instance** (Recommended)
+1. Instantiate clean vanilla AEM instance (no customizations)
+2. Patch to **exact same service pack level** as affected instance
+3. Use `oak-upgrade` to sidegrade **only** corrupted `/libs` paths:
+   ```bash
+   java -jar oak-upgrade-*.jar \
+     --include-paths=/libs/granite/core,/libs/cq/core \
+     --src=segment-tar:/path/to/vanilla/segmentstore \
+     --dst=segment-tar:/path/to/affected/segmentstore
+   ```
+4. Restart affected AEM instance to verify
+
+**Option 2: Content Package from Parallel Instance**
+- Create content package of `/libs` (only corrupted paths)
+- Install via Package Manager
+- Requires AEM to start and Package Manager to be accessible
+
+## Decision Matrix: Can I Use Surgical Removal?
+
+| Corrupted Path | Surgical Removal Viable? | Why? |
+|----------------|-------------------------|------|
+| `/content/dam/asset123` | ✅ Yes | Isolated asset, non-critical |
+| `/content/site/page456` | ✅ Yes | Isolated page, non-critical |
+| `/home/users/a/ab/abc/user@example.com` | ✅ Yes | Regular user, recreatable |
+| `/home/groups/g/gr/group/content-authors` | ✅ Yes | Regular group, recreatable |
+| `/home/users/system/*/admin` | ❌ **NO** | **CRITICAL**: Admin user |
+| `/home/users/system/*/authentication-service` | ❌ **NO** | **CRITICAL**: Service user |
+| `/home/groups/*/administrators` | ❌ **NO** | **CRITICAL**: Administrators group |
+| `/jcr:system/jcr:versionStorage/abc123` | ✅ Yes | Version history for one node |
+| `/oak:index/damAssetLucene/:data` | ✅ Yes | Index data (hidden), **but MASSIVE IO cost to rebuild** |
+| `/oak:index/damAssetLucene` | ⚠️ **RISKY** | Index definition - must recreate manually |
+| `/oak:index/uuid` | ❌ **NO** | **CRITICAL**: Property index (sync), AEM won't start |
+| `/oak:index/nodetype` | ❌ **NO** | **CRITICAL**: Property index (sync), AEM won't start |
+| `/oak:index/counter` | ❌ **NO** | **CRITICAL**: Property index (sync), may prevent startup |
+| `/jcr:system/jcr:nodeTypes` | ❌ **NO** | **CRITICAL**: Content model definitions |
+| `/jcr:system/jcr:namespaces` | ❌ **NO** | **CRITICAL**: Namespace registry |
+| `/rep:security` | ❌ **NO** | **CRITICAL**: Security/auth breaks |
+| `/libs/*` | ⚠️ Maybe | May prevent startup, sidegrade from vanilla |
+| `/apps/myproject` | ✅ Yes | Custom code, redeploy via CI/CD |
+
+**Rule of Thumb**: If `count-nodes analysis` shows corruption in:
+- `/oak:index` (especially `uuid`, `nodetype`, `counter`)
+- `/jcr:system/jcr:nodeTypes` or `/jcr:system/jcr:namespaces`
+- `/rep:security`
+- `/home/users/system/*` or `/home/groups/*/administrators`
+
+**Skip surgical removal and go directly to restore/sidegrade**.
 
 ## Step 3: Dry Run
 
@@ -147,14 +282,16 @@ For removing a single known path:
 3. **Check critical paths** - Never remove system nodes
 4. **Verify after** - Run check to confirm success
 5. **Backup first** - If possible, backup before removal
+6. **Understand index types** - Property indexes (sync) vs Lucene indexes (async)
 :::
 
 ## When Surgical Removal Won't Work
 
 - **Critical paths corrupted** - Must restore or sidegrade
+- **Property indexes corrupted** - AEM won't start even after removal
 - **Too many paths** - Sidegrade might be faster
 - **Root segments corrupted** - Journal recovery or sidegrade
-- **Index corruption** - May need index rebuild after
+- **Full-text index corruption** - Removal works but re-indexing takes weeks
 
 ## Key Takeaways
 
@@ -163,5 +300,7 @@ For removing a single known path:
 2. **remove-nodes fixes them** - Surgically removes bad nodes
 3. **Always dry-run** - Review before executing
 4. **Check critical paths** - Some paths cannot be removed
-5. **Verify with check** - Confirm repository is healthy
+5. **Property indexes are CRITICAL** - uuid, nodetype, counter cannot be removed
+6. **Lucene indexes are EXPENSIVE** - Full-text re-indexing takes weeks
+7. **Verify with check** - Confirm repository is healthy
 :::
