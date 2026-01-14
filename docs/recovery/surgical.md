@@ -5,6 +5,18 @@ SegmentStore (TarMK) • Oak 1.22+
 **Not for AEMaaCS**
 :::
 
+::: warning ⚠️ Requires somarc/apache-jackrabbit-oak Fork
+The `:count-nodes` and `:remove-nodes` console commands are **not available** in the upstream Apache Jackrabbit Oak project. They exist only in the [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak) fork.
+
+To use these commands, build oak-run from the fork:
+```bash
+git clone https://github.com/somarc/apache-jackrabbit-oak.git
+cd apache-jackrabbit-oak
+mvn clean install -DskipTests -pl oak-run -am
+# JAR will be at oak-run/target/oak-run-*.jar
+```
+:::
+
 Surgical removal lets you **precisely remove corrupted paths** while preserving the rest of the repository. It's more work than journal recovery but can save more data.
 
 ## 🔍 Signals That Lead Here

@@ -28,9 +28,13 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 |-----------|---------|-------|
 | **Diagnose** | `oak-run check /path/to/segmentstore` | Always run first |
 | **Rebuild journal** | `oak-run recover-journal /path/to/segmentstore` | Safe, non-destructive |
-| **Find corruption** | `:count-nodes` in console | Logs to `/tmp/count-nodes-snfe-*.log` |
-| **Remove bad nodes** | `:remove-nodes <logfile> dry-run` | Always dry-run first! |
+| **Find corruption** | `:count-nodes` in console | ⚠️ somarc fork only |
+| **Remove bad nodes** | `:remove-nodes <logfile> dry-run` | ⚠️ somarc fork only |
 | **Extract content** | `oak-upgrade --copy-binaries src dst` | Last resort sidegrade |
+
+::: warning ⚠️ somarc Fork Commands
+`:count-nodes` and `:remove-nodes` require [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak). Not in upstream Apache Oak.
+:::
 
 ## ⚠️ NEVER Do These
 

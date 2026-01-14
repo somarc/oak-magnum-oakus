@@ -1,5 +1,17 @@
 # 📊 count-nodes Command
 
+::: warning ⚠️ Requires somarc/apache-jackrabbit-oak Fork
+The `:count-nodes` and `:remove-nodes` console commands are **not available** in the upstream Apache Jackrabbit Oak project. They exist only in the [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak) fork.
+
+To use these commands, build oak-run from the fork:
+```bash
+git clone https://github.com/somarc/apache-jackrabbit-oak.git
+cd apache-jackrabbit-oak
+mvn clean install -DskipTests -pl oak-run -am
+# JAR will be at oak-run/target/oak-run-*.jar
+```
+:::
+
 The `count-nodes` command traverses the repository tree, counting nodes and detecting corruption.
 
 ## Usage

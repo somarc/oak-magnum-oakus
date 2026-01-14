@@ -145,6 +145,10 @@ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 
 ### Option B: Surgical Removal (preserves more data, SLOWER)
 
+::: warning ⚠️ Requires somarc Fork
+`:count-nodes` and `:remove-nodes` are only in [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak). Build oak-run from that fork first.
+:::
+
 ```bash
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
