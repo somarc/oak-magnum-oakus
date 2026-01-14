@@ -44,7 +44,7 @@ graph TB
     style RDBMK fill:#8b5cf6,stroke:#7c3aed
 ```
 
-**Key Takeaway**: TarMK (SegmentNodeStore) is the most common deployment for AEM on-premise and AMS. This guide focuses on TarMK.
+**Key Takeaway**: TarMK (SegmentNodeStore) is the most common deployment. This guide focuses on TarMK.
 
 ## Key Components
 

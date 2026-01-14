@@ -54,12 +54,60 @@ Migration complete: 85% of nodes recovered
 
 ## Options
 
+### Essential Options
+
 | Option | Description |
 |--------|-------------|
-| `--copy-binaries` | Copy binaries to new DataStore (recommended) |
-| `--include-paths` | Only migrate specific paths |
-| `--exclude-paths` | Skip specific paths |
-| `--merge-paths` | Merge into existing repository |
+| `--copy-binaries` | Copy binaries to new DataStore (recommended for recovery) |
+| `--include-paths` | Only migrate specific paths (comma-separated) |
+| `--exclude-paths` | Skip specific paths (comma-separated) |
+| `--merge-paths` | Merge into existing repository (comma-separated) |
+
+### Recovery-Specific Options
+
+| Option | Description |
+|--------|-------------|
+| `--fail-on-error` | Fail completely if nodes can't be read (default: skip and continue) |
+| `--ignore-missing-binaries` | Proceed even if binaries are missing from DataStore |
+| `--copy-versions` | Copy version storage: `true`, `false`, or `yyyy-mm-dd` cutoff (default: true) |
+| `--copy-orphaned-versions` | Copy orphaned versions: `true`, `false`, or `yyyy-mm-dd` cutoff (default: true) |
+
+### Performance Options
+
+| Option | Description |
+|--------|-------------|
+| `--cache <MB>` | Cache size in MB (default: 256). Increase for large repos. |
+| `--disable-mmap` | Disable memory-mapped file access (use if running into memory issues) |
+
+### DataStore Options
+
+| Option | Description |
+|--------|-------------|
+| `--src-datastore <path>` | Source FileDataStore directory |
+| `--datastore <path>` | Target FileDataStore directory |
+| `--src-s3datastore <path>` | Source S3 DataStore directory |
+| `--src-s3config <file>` | Source S3 configuration file |
+| `--s3datastore <path>` | Target S3 DataStore directory |
+| `--s3config <file>` | Target S3 configuration file |
+
+### Source/Destination Formats
+
+oak-upgrade supports multiple repository formats:
+
+```bash
+# Local segment-tar (most common)
+/path/to/segmentstore
+
+# Azure Blob Storage
+az:https://myaccount.blob.core.windows.net/container/repo
+# (set AZURE_SECRET_KEY environment variable)
+
+# MongoDB
+mongodb://host:port/database
+
+# Explicit segment-tar prefix
+segment-tar:/path/to/segmentstore
+```
 
 ### Selective Migration
 
@@ -86,6 +134,38 @@ $ java -jar oak-upgrade-*.jar upgrade \
     --dst=segment-tar:/path/to/restored/segmentstore
 
 # Result: Old backup + recent changes (minus corrupted paths)
+```
+
+### Recovery with Missing Binaries
+
+If DataStore has missing blobs but you want to salvage the repository structure:
+
+```bash
+# Proceed even if binaries are missing
+$ java -jar oak-upgrade-*.jar upgrade \
+    --ignore-missing-binaries \
+    --copy-binaries \
+    /path/to/corrupted /path/to/new
+
+# Result: Repository structure intact, missing binaries become broken references
+# You'll need to re-upload missing assets later
+```
+
+### Skip Old Versions (Faster Recovery)
+
+Version storage can be huge. Skip it to speed up recovery:
+
+```bash
+# Skip all version history
+$ java -jar oak-upgrade-*.jar upgrade \
+    --copy-versions=false \
+    --copy-orphaned-versions=false \
+    /path/to/corrupted /path/to/new
+
+# Or only copy versions from last 30 days
+$ java -jar oak-upgrade-*.jar upgrade \
+    --copy-versions=2025-12-15 \
+    /path/to/corrupted /path/to/new
 ```
 
 ## Standby Recovery: Why It Rarely Works

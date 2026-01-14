@@ -1,6 +1,29 @@
 # 🔍 oak-run check
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22+  
+**Not for AEMaaCS**
+:::
+
 The `check` command performs a consistency check on a SegmentStore (TarMK) repository. This is the **first command** you should run when corruption is suspected.
+
+## 🔍 Signals That Lead Here
+
+```
+SegmentNotFoundException: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
+TarMK refuses to start after unclean shutdown
+IllegalStateException: Segment xyz not found in tar file
+Repository won't open after disk full event
+```
+
+## ✅ Do / ❌ Don't
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Run `check` as first diagnostic step | Run `compact` before `check` |
+| Stop AEM before running `check` | Run `check` while AEM is running |
+| Save the output (redirect to file) | Ignore "no good revision" results |
+| Use `--bin` flag for thorough check | Assume "check passed" means no issues |
 
 ## Basic Usage
 

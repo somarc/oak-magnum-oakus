@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "The Magnum OAKus"
   text: "Production-grade recovery for Apache Oak"
-  tagline: "Comprehensive guide to SegmentStore (TarMK) maintenance, corruption recovery, and operational excellence"
+  tagline: "SegmentStore (TarMK) • Not for AEMaaCS"
   image:
     src: /oak-tree.svg
     alt: Oak Tree
@@ -57,6 +57,12 @@ features:
 
 The definitive guide to Apache Oak repository operations, born from years of production incident response and deep architectural understanding.
 
+::: danger 🎯 SCOPE
+This guide requires direct filesystem access to the repository.
+
+**Not for AEMaaCS**
+:::
+
 **This guide will help you:**
 
 - 🚨 **Recover from corruption** - Step-by-step procedures for every scenario
@@ -88,11 +94,25 @@ The definitive guide to Apache Oak repository operations, born from years of pro
 
 Originally authored for Adobe Customer Support, The Magnum OAKus represents thousands of hours of production incident response distilled into actionable procedures.
 
-**Primarily focused on:**
-- SegmentStore (TarMK) - The most common AEM deployment
-- DocumentNodeStore (MongoMK/RDB) references where applicable
+**Scope:**
+
+| ✅ Applicable | ❌ Not Applicable |
+|--------------|------------------|
+| SegmentStore (TarMK) | AEMaaCS |
+| DocumentNodeStore (MongoMK/RDB) | Cloud-native persistence |
+| Direct filesystem access | Abstracted repository layer |
+
+**Version Context:**
+- Oak 1.22+ (AEM 6.4+) through Oak 1.60+ (AEM 6.5.20+)
+- Procedures tested primarily on AEM 6.5.x with Oak 1.40-1.60
+- Some behaviors differ in older Oak versions — check release notes
 
 **Philosophy:**
 - **Backup-first** - The only guaranteed recovery method
 - **Understand before acting** - Know why procedures work
 - **Time-bounded decisions** - When in doubt, restore from backup
+
+::: info 📅 Last Updated
+Content last reviewed: January 2026 • Oak 1.60.x / AEM 6.5.21
+:::
+

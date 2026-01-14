@@ -1,6 +1,29 @@
 # 🔪 Surgical Removal
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22+  
+**Not for AEMaaCS**
+:::
+
 Surgical removal lets you **precisely remove corrupted paths** while preserving the rest of the repository. It's more work than journal recovery but can save more data.
+
+## 🔍 Signals That Lead Here
+
+```
+oak-run check found good revision but you want to preserve recent changes
+SegmentNotFoundException for specific paths (not system-wide)
+count-nodes identified isolated corrupted paths in /content or /var
+Want to remove corrupted content rather than rolling back
+```
+
+## ✅ Do / ❌ Don't
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Run `oak-run check` first | Skip straight to removal |
+| Review log file before removal | Remove without dry-run |
+| Use `dry-run` flag first | Remove `/oak:index/uuid` or `/jcr:system` |
+| Verify with `check` after removal | Assume removal fixed everything |
 
 ## Overview
 

@@ -1,6 +1,20 @@
 # 🗜️ Compaction
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22+  
+**Not for AEMaaCS**
+:::
+
 Compaction (garbage collection) reclaims disk space by removing unreachable segments. **Never run it on a corrupted repository.**
+
+## 🔍 Signals That Lead Here
+
+```
+Disk usage growing despite content deletion
+TAR files accumulating (data00050a.tar, data00051a.tar...)
+"Compaction cancelled: Not enough disk space"
+Online GC not reclaiming expected space
+```
 
 ## ⚠️ Critical Warning
 

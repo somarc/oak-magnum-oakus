@@ -1,6 +1,21 @@
 # 📋 Understanding Checkpoints
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22+  
+**Not for AEMaaCS**
+:::
+
 A **checkpoint** in Oak is a snapshot of the repository state at a specific point in time. Checkpoints are critical for async indexing, backup operations, and maintenance tasks.
+
+## 🔍 Signals That Lead Here
+
+```
+Disk usage growing despite compaction running
+"Cannot read index checkpoint" on AEM startup
+Dozens of checkpoints in oak-run checkpoints list
+async-temp array has multiple entries (death loop)
+Indexing stuck for weeks/months (ConsecutiveFailedExecutions high)
+```
 
 ## What is a Checkpoint?
 

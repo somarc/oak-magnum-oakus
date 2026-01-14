@@ -24,7 +24,7 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 
 ## SegmentStore (TarMK)
 
-**Most common** for AEM on-premise and AMS single-instance deployments.
+**Most common** for single-instance deployments.
 
 ### Characteristics
 

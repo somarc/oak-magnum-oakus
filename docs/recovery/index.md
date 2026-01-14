@@ -1,6 +1,15 @@
 # 🛠️ Recovery Operations
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22+  
+**Not for AEMaaCS**
+:::
+
 This section covers the various recovery options available when dealing with repository corruption.
+
+## 🚨 Start Here: SNFE Playbook
+
+If you're seeing `SegmentNotFoundException`, start with the **[SNFE Playbook](/recovery/snfe-playbook)** — it covers diagnosis, decision trees, and all recovery paths.
 
 ## Recovery Decision Tree
 
@@ -58,8 +67,26 @@ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
 
 ## Detailed Guides
 
+- [🚨 SNFE Playbook](/recovery/snfe-playbook) - Start here for SegmentNotFoundException
 - [oak-run check](/recovery/check) - Diagnostic command
 - [Journal Recovery](/recovery/journal) - Rebuild journal.log
 - [Surgical Removal](/recovery/surgical) - Remove corrupted paths
 - [Compaction](/recovery/compaction) - When and how to compact
 - [Sidegrade](/recovery/sidegrade) - Extract accessible content
+- [Pre-Text Extraction](/recovery/pre-text-extraction) - Speed up re-indexing after recovery
+
+## 🔀 When to Hand Off
+
+Not all "Oak problems" are actually Oak problems. Know when to escalate:
+
+| Symptom | Likely Owner | Why |
+|---------|--------------|-----|
+| SNFE during indexing | **Indexing team** | May be Lucene index corruption, not segment |
+| SNFE on author with MongoDB | **Author persistence** | DocumentNodeStore has different recovery |
+| Missing blobs after migration | **Migration team** | Source data or migration tool issue |
+| Namespace modification errors | **Author persistence** | DocStore concern, not segment persistence |
+| OakState0001 conflicts | **Replication team** | Content conflict, not corruption |
+
+::: info 📅 Last Updated
+Content last reviewed: January 2026 • Oak 1.60.x / AEM 6.5.21
+:::

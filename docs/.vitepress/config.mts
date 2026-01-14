@@ -61,6 +61,7 @@ export default withMermaid(
             collapsed: false,
             items: [
               { text: 'Recovery Options', link: '/recovery/' },
+              { text: '🚨 SNFE Playbook', link: '/recovery/snfe-playbook' },
               { text: 'oak-run check', link: '/recovery/check' },
               { text: 'Journal Recovery', link: '/recovery/journal' },
               { text: 'Surgical Removal', link: '/recovery/surgical' },

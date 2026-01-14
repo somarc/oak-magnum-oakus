@@ -1,8 +1,24 @@
 # 🚨 Crisis Checklist
 
+::: danger 🎯 SCOPE
+Requires filesystem access to run `oak-run` commands.  
+**Not for AEMaaCS**
+:::
+
 **PRINT THIS - LAMINATE IT - TAPE IT TO YOUR MONITOR**
 
 Follow the boxes in order. Check them off as you go. **DO NOT SKIP BOXES.**
+
+## 🔍 Common Signals That Brought You Here
+
+| Signal | Likely Cause | Jump To |
+|--------|--------------|---------|
+| `SegmentNotFoundException: Segment xyz not found` | Segment corruption or missing TAR | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `TarMK refuses to start` / `Failed to open TarMK` | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `IllegalStateException: Cannot read from closed store` | Unclean shutdown, lock file | [Identify Repo Type](/crisis/identify-repo) |
+| `OutOfMemoryError` during startup | Heap too small for repo size | Not corruption — increase heap |
+| Disk 100% full | Checkpoint bloat or GC not running | [Checkpoints](/checkpoints/) |
+| `DataStoreException: Record does not exist` | Missing blob in DataStore | [DataStore Consistency](/datastore/consistency) |
 
 ::: warning ⏱️ TIME WARNING
 All time estimates assume you know what you're doing. If you're uncertain, stressed, or reading this for the first time during an incident: **multiply all times by 3-5x**. When in doubt, restore from backup.

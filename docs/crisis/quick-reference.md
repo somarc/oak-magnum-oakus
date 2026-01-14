@@ -52,9 +52,3 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 | `oak-upgrade` sidegrade | ~4-6 hours |
 | Backup restore | ~1-2 hours |
 
-## 🆘 Emergency Contact
-
-**Adobe Support**
-
-- AEM Cloud Service / AMS customers: Open a P1 support ticket
-- On-premise customers: Contact your Adobe support representative
