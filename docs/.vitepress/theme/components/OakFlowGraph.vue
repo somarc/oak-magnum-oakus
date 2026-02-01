@@ -31,7 +31,6 @@ const props = defineProps<{
 const emit = defineEmits(['nodeClick'])
 
 const hoveredNode = ref<Node | null>(null)
-const nodeScales = ref<Record<string, number>>({})
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
 const isAnimating = ref(false)
@@ -82,60 +81,16 @@ const width = computed(() => {
 
 const height = computed(() => props.height || 400)
 
-function getNodeTransform(node: Node): string {
-  const scale = nodeScales.value[node.id] || 1
-  return `scale(${scale})`
-}
-
 function handleNodeEnter(node: Node) {
   hoveredNode.value = node
-  // Smoothly animate scale
-  const targetScale = 1.05
-  const duration = 200
-  const startScale = nodeScales.value[node.id] || 1
-  const startTime = performance.now()
-  
-  function animate() {
-    const elapsed = performance.now() - startTime
-    const progress = Math.min(elapsed / duration, 1)
-    const easeOut = 1 - Math.pow(1 - progress, 3) // Cubic ease-out
-    nodeScales.value[node.id] = startScale + (targetScale - startScale) * easeOut
-    
-    if (progress < 1) {
-      requestAnimationFrame(animate)
-    } else {
-      nodeScales.value[node.id] = targetScale
-    }
-  }
-  requestAnimationFrame(animate)
+  // No scaling - nodes remain stationary
 }
 
 function handleNodeLeave(node: Node) {
   hoveredNode.value = null
-  // Smoothly animate scale back
-  const targetScale = 1
-  const duration = 200
-  const startScale = nodeScales.value[node.id] || 1.05
-  const startTime = performance.now()
-  
-  function animate() {
-    const elapsed = performance.now() - startTime
-    const progress = Math.min(elapsed / duration, 1)
-    const easeOut = 1 - Math.pow(1 - progress, 3) // Cubic ease-out
-    nodeScales.value[node.id] = startScale + (targetScale - startScale) * easeOut
-    
-    if (progress < 1) {
-      requestAnimationFrame(animate)
-    } else {
-      nodeScales.value[node.id] = targetScale
-    }
-  }
-  requestAnimationFrame(animate)
 }
 
 function initFlow() {
-  // Reset scales when flow changes
-  nodeScales.value = {}
   switch (props.flow) {
     case 'segment-structure':
       initSegmentStructure()
@@ -162,13 +117,6 @@ function initFlow() {
       initPreTextExtraction()
       break
   }
-  
-  // Initialize scales for all nodes
-  nodes.value.forEach(node => {
-    if (!(node.id in nodeScales.value)) {
-      nodeScales.value[node.id] = 1
-    }
-  })
 }
 
 function addNode(id: string, type: string, x: number, y: number, options: Partial<Node> = {}) {
@@ -736,7 +684,6 @@ onMounted(() => {
             class="node-wrapper"
           >
             <g
-              :transform="getNodeTransform(node)"
               class="node"
               :class="{ hovered: hoveredNode?.id === node.id }"
               @mouseenter="handleNodeEnter(node)"
@@ -887,7 +834,6 @@ onMounted(() => {
 
 .node {
   cursor: pointer;
-  transform-origin: center;
 }
 
 .node-glow {
