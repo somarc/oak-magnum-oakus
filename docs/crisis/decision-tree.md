@@ -4,11 +4,11 @@ Follow this flowchart to determine your recovery path.
 
 ```mermaid
 flowchart TD
-    START[🚨 Repository Problem Detected] --> BACKUP{Do you have a<br/>recent backup?}
+    START[🚨 Repository<br/>Problem Detected] --> BACKUP{Do you have a<br/>recent backup?}
     
     BACKUP -->|Yes, < 24h old| RESTORE[✅ RESTORE BACKUP<br/>You're done!]
-    BACKUP -->|Yes, but old| OLD_BACKUP[Consider: Restore old backup<br/>+ merge recent content]
-    BACKUP -->|No backup| NO_BACKUP[Continue to diagnosis]
+    BACKUP -->|Yes, but old| OLD_BACKUP[Consider: Restore<br/>old backup<br/>+ merge recent content]
+    BACKUP -->|No backup| NO_BACKUP[Continue to<br/>diagnosis]
     
     OLD_BACKUP --> ACCEPTABLE{Is data loss<br/>acceptable?}
     ACCEPTABLE -->|Yes| RESTORE
@@ -16,31 +16,31 @@ flowchart TD
     
     NO_BACKUP --> IDENTIFY{What repository<br/>type?}
     
+    IDENTIFY -->|DocumentNodeStore| CHECK_DOC[Out of scope:<br/>oak-run check is<br/>SegmentStore-only]
     IDENTIFY -->|SegmentStore| CHECK_SEG[Run: oak-run check]
-    IDENTIFY -->|DocumentNodeStore| CHECK_DOC[Out of scope:<br/>oak-run check is SegmentStore-only]
-    IDENTIFY -->|Don't know| IDENTIFY_HELP[See: Identify Repo Type]
+    IDENTIFY -->|Don't know| IDENTIFY_HELP[See: Identify<br/>Repo Type]
     
     CHECK_SEG --> CHECK_RESULT{Check result?}
     
-    CHECK_RESULT -->|Good revision found| GOOD_REV[✅ Repository recoverable]
-    CHECK_RESULT -->|No good revision| NO_REV[⚠️ Severe corruption]
-    CHECK_RESULT -->|Check fails to run| BRICKED[❌ Repository bricked]
+    CHECK_RESULT -->|Good revision<br/>found| GOOD_REV[✅ Repository<br/>recoverable]
+    CHECK_RESULT -->|No good<br/>revision| NO_REV[⚠️ Severe<br/>corruption]
+    CHECK_RESULT -->|Check fails<br/>to run| BRICKED[❌ Repository<br/>bricked]
     
-    GOOD_REV --> RECOVERY_PATH{Choose recovery path}
+    GOOD_REV --> RECOVERY_PATH{Choose<br/>recovery path}
     
-    RECOVERY_PATH -->|Simpler, some data loss| RECOVER_JOURNAL[recover-journal]
-    RECOVERY_PATH -->|Surgical, preserve more| SURGICAL[count-nodes + remove-nodes]
+    RECOVERY_PATH -->|Simpler, some<br/>data loss| RECOVER_JOURNAL[recover-journal]
+    RECOVERY_PATH -->|Surgical,<br/>preserve more| SURGICAL[count-nodes +<br/>remove-nodes]
     
-    NO_REV --> LAST_RESORT{Last resort options}
+    NO_REV --> LAST_RESORT{Last resort<br/>options}
     
-    LAST_RESORT -->|Try journal rebuild| RECOVER_JOURNAL
-    LAST_RESORT -->|Extract what's accessible| SIDEGRADE[oak-upgrade sidegrade]
+    LAST_RESORT -->|Try journal<br/>rebuild| RECOVER_JOURNAL
+    LAST_RESORT -->|Extract what's<br/>accessible| SIDEGRADE[oak-upgrade<br/>sidegrade]
     
     BRICKED --> MUST_RESTORE[Must restore from backup<br/>No other option]
     
     RECOVER_JOURNAL --> VERIFY[Run check again]
     SURGICAL --> VERIFY
-    SIDEGRADE --> NEW_REPO[New repository created]
+    SIDEGRADE --> NEW_REPO[New repository<br/>created]
     
     VERIFY --> VERIFY_RESULT{Verification?}
     VERIFY_RESULT -->|Success| DONE[✅ Start AEM]

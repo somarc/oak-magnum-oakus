@@ -48,7 +48,7 @@ Contents:
 Segments reference each other to form the repository tree:
 
 ```mermaid
-graph LR
+graph TD
     A[Segment A<br/>/content] --> B[Segment B<br/>/content/dam]
     B --> C[Segment C<br/>/content/dam/2024]
     C --> D[Segment D<br/>/content/dam/2024/Q3]

@@ -5,7 +5,7 @@ Orphaned checkpoints are a common cause of disk space issues. They prevent garba
 ## The Problem
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Checkpoint Created] --> B[Pins Segments]
     B --> C[Indexer Finishes]
     C --> D[New Checkpoint Created]

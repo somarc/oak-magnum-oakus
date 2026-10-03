@@ -143,7 +143,7 @@ A failed run on its own does **not** leak a checkpoint: `AsyncIndexUpdate` relea
 
 ## How Checkpoints Pin Segments
 
-<OakFlowGraph flow="checkpoint-pin" :height="500" />
+<OakFlowGraph flow="checkpoint-pin" />
 
 ### The Pinning Problem
 

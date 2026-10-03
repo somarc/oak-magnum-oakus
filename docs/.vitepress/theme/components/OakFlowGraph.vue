@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, useId } from 'vue'
 
 interface Node {
   id: string
@@ -20,16 +20,18 @@ interface Edge {
   color: string
   label?: string
   width?: number
+  curve?: number // bend of the quadratic curve; negative bends the other way
 }
 
 const props = defineProps<{
   flow: 'segment-structure' | 'tar-lifecycle' | 'gc-cycle' | 'compaction' | 'checkpoint-pin' | 'recovery-decision' | 'journal-rebuild' | 'pre-text-extraction'
-  height?: number
   interactive?: boolean
 }>()
 
 const emit = defineEmits(['nodeClick'])
 
+// Unique per instance: several graphs can share a page.
+const uid = useId()
 const hoveredNode = ref<Node | null>(null)
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
@@ -70,16 +72,36 @@ const EDGE_COLORS: Record<string, string> = {
   COPY: '#22c55e',
 }
 
-const width = computed(() => {
-  switch (props.flow) {
-    case 'recovery-decision': return 900
-    case 'gc-cycle': return 950
-    case 'compaction': return 900
-    default: return 850
+const DEFAULT_RADIUS = 28
+const LABEL_CHAR_WIDTH = 7 // approximate px per character at the label font sizes
+const PADDING = 16
+const MIN_SCALE = 0.75 // below this, scroll horizontally instead of shrinking the text
+
+// The canvas is fitted to the nodes, their labels and the edge labels, so nothing can be clipped.
+const viewBox = computed(() => {
+  const xs: number[] = []
+  const ys: number[] = []
+  for (const n of nodes.value) {
+    const r = (n.radius || DEFAULT_RADIUS) + 8 // outer glow ring
+    const half = Math.max(r, (n.label.length * LABEL_CHAR_WIDTH) / 2)
+    xs.push(n.x - half, n.x + half)
+    ys.push(n.y - r, n.y + r + 16) // label sits below the circle
   }
+  for (const e of edges.value) {
+    const g = edgeGeometry(e)
+    if (!g) continue
+    const half = ((e.label?.length || 0) * LABEL_CHAR_WIDTH) / 2
+    xs.push(g.mid.x - half, g.mid.x + half)
+    ys.push(g.mid.y - 8, g.mid.y + 8)
+  }
+  if (!xs.length) return { x: 0, y: 0, w: 850, h: 400 }
+  const x = Math.floor(Math.min(...xs) - PADDING)
+  const y = Math.floor(Math.min(...ys) - PADDING)
+  return { x, y, w: Math.ceil(Math.max(...xs) + PADDING) - x, h: Math.ceil(Math.max(...ys) + PADDING) - y }
 })
 
-const height = computed(() => props.height || 400)
+const arrowColors = computed(() => [...new Set(edges.value.map(e => e.color))])
+const arrowId = (color: string) => `${uid}-arrow-${arrowColors.value.indexOf(color)}`
 
 function handleNodeEnter(node: Node) {
   hoveredNode.value = node
@@ -142,6 +164,7 @@ function addEdge(from: string, to: string, type: string = 'DATA', options: Parti
     color: options.color || EDGE_COLORS[type] || EDGE_COLORS.DATA,
     label: options.label,
     width: options.width || 2,
+    curve: options.curve,
   })
 }
 
@@ -153,25 +176,26 @@ function initSegmentStructure() {
   nodes.value = []
   edges.value = []
   
-  // Segment internals
-  addNode('segment', 'SEGMENT', 100, 200, { label: 'Segment', description: 'Up to 256KB immutable block', radius: 40 })
-  addNode('uuid', 'NODE_RECORD', 250, 80, { label: 'UUID', description: 'Unique segment identifier' })
-  addNode('nodes', 'NODE_RECORD', 250, 160, { label: 'Node Records', description: 'JCR node structure' })
-  addNode('props', 'NODE_RECORD', 250, 240, { label: 'Value Records', description: 'Property values' })
-  addNode('blobs', 'BLOB_REF', 250, 320, { label: 'Blob Refs', description: 'External binary references' })
+  // Segment internals on the left; the records that reference other segments sit on
+  // the outer rows so their arrows to Segment B/C cross nothing
+  addNode('segment', 'SEGMENT', 260, 200, { label: 'Segment', description: 'Up to 256KB immutable block', radius: 40 })
+  addNode('uuid', 'NODE_RECORD', 80, 154, { label: 'UUID', description: 'Unique segment identifier' })
+  addNode('nodes', 'NODE_RECORD', 80, 62, { label: 'Node Records', description: 'JCR node structure' })
+  addNode('props', 'NODE_RECORD', 80, 338, { label: 'Value Records', description: 'Property values' })
+  addNode('blobs', 'BLOB_REF', 80, 246, { label: 'Blob Refs', description: 'External binary references' })
   
   // References to other segments
-  addNode('ref1', 'SEGMENT', 430, 120, { label: 'Segment B', description: 'Referenced segment' })
-  addNode('ref2', 'SEGMENT', 430, 280, { label: 'Segment C', description: 'Referenced segment' })
+  addNode('ref1', 'SEGMENT', 440, 110, { label: 'Segment B', description: 'Referenced segment' })
+  addNode('ref2', 'SEGMENT', 440, 290, { label: 'Segment C', description: 'Referenced segment' })
   
   // TAR container
   addNode('tar', 'TAR_FILE', 620, 200, { label: 'data00001a.tar', description: 'TAR archive containing segments', radius: 35 })
   
   addEdge('segment', 'uuid', 'DATA', { label: 'contains' })
   addEdge('segment', 'nodes', 'DATA')
-  addEdge('segment', 'props', 'DATA')
+  addEdge('segment', 'props', 'DATA', { curve: -0.2 })
   addEdge('segment', 'blobs', 'DATA')
-  addEdge('nodes', 'ref1', 'REFERENCE', { label: 'refs' })
+  addEdge('nodes', 'ref1', 'REFERENCE', { label: 'refs', curve: -0.2 })
   addEdge('props', 'ref2', 'REFERENCE', { label: 'refs' })
   addEdge('segment', 'tar', 'DATA', { label: 'stored in' })
   addEdge('ref1', 'tar', 'DATA')
@@ -214,24 +238,24 @@ function initGCCycle() {
   edges.value = []
   
   // Start
-  addNode('journal', 'JOURNAL', 70, 220, { label: 'Journal Head', description: 'Current repository state' })
+  addNode('journal', 'JOURNAL', 60, 220, { label: 'Journal Head', description: 'Current repository state' })
   
   // Estimation phase
-  addNode('estimate', 'COMPACTION', 220, 120, { label: 'Estimation', description: 'Growth since last GC' })
-  addNode('threshold', 'DECISION', 220, 320, { label: 'Threshold?', description: 'Grew ≥ sizeDeltaEstimation (1 GiB)?' })
+  addNode('estimate', 'COMPACTION', 200, 110, { label: 'Estimation', description: 'Growth since last GC' })
+  addNode('threshold', 'DECISION', 200, 330, { label: 'Threshold?', description: 'Grew ≥ sizeDeltaEstimation (1 GiB)?' })
   
   // Compaction phase
-  addNode('traverse', 'ROOT', 400, 120, { label: 'Tree Traversal', description: 'HEAD + every checkpoint' })
-  addNode('mark', 'LIVE', 400, 220, { label: 'Reachable Records', description: 'Only what HEAD/checkpoints use' })
-  addNode('copy', 'COMPACTION', 400, 320, { label: 'Rewrite', description: 'Into new-generation segments' })
+  addNode('traverse', 'ROOT', 370, 90, { label: 'Tree Traversal', description: 'HEAD + every checkpoint' })
+  addNode('mark', 'LIVE', 370, 220, { label: 'Reachable Records', description: 'Only what HEAD/checkpoints use' })
+  addNode('copy', 'COMPACTION', 370, 350, { label: 'Rewrite', description: 'Into new-generation segments' })
   
   // Cleanup phase
-  addNode('new_gen', 'GENERATION', 580, 170, { label: 'New Generation', description: 'Compacted segments' })
-  addNode('old_gen', 'GARBAGE', 580, 270, { label: 'Old Generations', description: 'Never copied; 2 generations retained' })
+  addNode('new_gen', 'GENERATION', 540, 160, { label: 'New Generation', description: 'Compacted segments' })
+  addNode('old_gen', 'GARBAGE', 540, 290, { label: 'Old Generations', description: 'Never copied; 2 generations retained' })
   
   // Final
-  addNode('cleanup', 'REAPER', 750, 220, { label: 'Cleanup', description: 'Reclaim old generations' })
-  addNode('done', 'SUCCESS', 880, 220, { label: 'Complete', description: 'Space reclaimed' })
+  addNode('cleanup', 'REAPER', 690, 220, { label: 'Cleanup', description: 'Reclaim old generations' })
+  addNode('done', 'SUCCESS', 820, 220, { label: 'Complete', description: 'Space reclaimed' })
   
   addEdge('journal', 'estimate', 'DATA', { label: 'analyze' })
   addEdge('journal', 'threshold', 'CONTROL')
@@ -324,18 +348,18 @@ function initRecoveryDecision() {
   // Decision points
   addNode('check_result', 'DECISION', 250, 200, { label: 'Check Result?', description: 'What did check find?' })
   addNode('good_rev', 'SUCCESS', 420, 100, { label: 'Good Revision', description: 'Recoverable state found' })
-  addNode('no_good', 'FAILURE', 420, 200, { label: 'No Good Rev', description: 'Severely corrupted' })
-  addNode('check_fail', 'FAILURE', 420, 300, { label: 'Check Failed', description: 'Repository bricked' })
+  addNode('no_good', 'FAILURE', 420, 300, { label: 'No Good Rev', description: 'Severely corrupted' })
+  addNode('check_fail', 'FAILURE', 420, 200, { label: 'Check Failed', description: 'Repository bricked' })
   
   // Recovery options
-  addNode('rollback', 'BACKUP', 600, 60, { label: 'Rollback', description: 'recover-journal (fast)' })
-  addNode('surgical', 'COMPACTION', 600, 140, { label: 'Surgical', description: 'count-nodes + remove-node(s)' })
-  addNode('sidegrade', 'COMPACTION', 600, 220, { label: 'Sidegrade', description: 'oak-upgrade extract' })
-  addNode('restore', 'BACKUP', 600, 320, { label: 'Restore Backup', description: 'Only option' })
+  addNode('rollback', 'BACKUP', 600, 50, { label: 'Rollback', description: 'recover-journal (fast)' })
+  addNode('surgical', 'COMPACTION', 600, 142, { label: 'Surgical', description: 'count-nodes + remove-node(s)' })
+  addNode('sidegrade', 'COMPACTION', 600, 326, { label: 'Sidegrade', description: 'oak-upgrade extract' })
+  addNode('restore', 'BACKUP', 600, 234, { label: 'Restore Backup', description: 'Only option' })
   
   // Outcomes
-  addNode('success', 'SUCCESS', 780, 140, { label: 'Recovered', description: 'Repository accessible' })
-  addNode('partial', 'DECISION', 780, 220, { label: 'Partial Loss', description: 'Some data lost' })
+  addNode('success', 'SUCCESS', 780, 142, { label: 'Recovered', description: 'Repository accessible' })
+  addNode('partial', 'DECISION', 780, 326, { label: 'Partial Loss', description: 'Some data lost' })
   
   addEdge('start', 'check_result', 'DATA', { label: 'run' })
   addEdge('check_result', 'good_rev', 'DATA', { label: 'found' })
@@ -389,23 +413,23 @@ function initPreTextExtraction() {
   edges.value = []
   
   // Phase 1: Generate CSV
-  addNode('repo', 'ROOT', 80, 80, { label: 'Repository', description: 'SegmentStore with binaries', radius: 32 })
-  addNode('datastore', 'BINARY', 80, 200, { label: 'DataStore', description: 'FileDataStore or S3', radius: 32 })
-  addNode('tika_gen', 'COMPACTION', 250, 140, { label: 'tika --generate', description: 'Scan repo for binaries' })
-  addNode('csv', 'CSV', 420, 140, { label: 'binary-stats.csv', description: 'List of all binary refs' })
+  addNode('repo', 'ROOT', 70, 230, { label: 'Repository', description: 'SegmentStore with binaries', radius: 32 })
+  addNode('datastore', 'BINARY', 70, 90, { label: 'DataStore', description: 'FileDataStore or S3', radius: 32 })
+  addNode('tika_gen', 'COMPACTION', 220, 160, { label: 'tika --generate', description: 'Scan repo for binaries' })
+  addNode('csv', 'CSV', 370, 160, { label: 'binary-stats.csv', description: 'List of all binary refs' })
   
   // Phase 2: Extract text
-  addNode('tika_extract', 'TIKA', 420, 280, { label: 'tika --extract', description: 'Apache Tika extraction' })
-  addNode('text_store', 'TEXT_STORE', 620, 280, { label: 'Pre-extracted Store', description: './store directory' })
+  addNode('tika_extract', 'TIKA', 520, 90, { label: 'tika --extract', description: 'Apache Tika extraction' })
+  addNode('text_store', 'TEXT_STORE', 670, 200, { label: 'Pre-extracted Store', description: './store directory' })
   
   // Alternative: Use existing index
-  addNode('existing_idx', 'INDEX', 250, 380, { label: 'Index Dump', description: 'Text stored on the binary node' })
-  addNode('tika_populate', 'COMPACTION', 420, 380, { label: 'tika --populate', description: 'Reuse indexed text' })
+  addNode('existing_idx', 'INDEX', 370, 330, { label: 'Index Dump', description: 'Text stored on the binary node' })
+  addNode('tika_populate', 'COMPACTION', 520, 300, { label: 'tika --populate', description: 'Reuse indexed text' })
   
   // Phase 3: Configure OSGi
-  addNode('osgi', 'OSGI', 780, 200, { label: 'Point Indexer', description: 'OSGi or --pre-extracted-text-dir' })
-  addNode('reindex', 'INDEX', 780, 340, { label: 'Re-index', description: 'Store used during reindex' })
-  addNode('success', 'SUCCESS', 900, 270, { label: 'Complete', description: 'Index rebuilt' })
+  addNode('osgi', 'OSGI', 800, 100, { label: 'Point Indexer', description: 'OSGi or --pre-extracted-text-dir' })
+  addNode('reindex', 'INDEX', 800, 230, { label: 'Re-index', description: 'Store used during reindex' })
+  addNode('success', 'SUCCESS', 800, 360, { label: 'Complete', description: 'Index rebuilt' })
   
   // Edges - Phase 1
   addEdge('repo', 'tika_gen', 'DATA', { label: 'scan' })
@@ -414,7 +438,7 @@ function initPreTextExtraction() {
   
   // Edges - Phase 2 (Tika path)
   addEdge('csv', 'tika_extract', 'DATA', { label: 'read' })
-  addEdge('datastore', 'tika_extract', 'DATA', { label: 'binaries' })
+  addEdge('datastore', 'tika_extract', 'DATA', { label: 'binaries', curve: -0.1 })
   addEdge('tika_extract', 'text_store', 'COPY', { label: 'extract' })
   
   // Edges - Phase 2 (Index dump path)
@@ -423,52 +447,38 @@ function initPreTextExtraction() {
   addEdge('tika_populate', 'text_store', 'COPY', { label: 'populate' })
   
   // Edges - Phase 3
-  addEdge('text_store', 'osgi', 'CONTROL', { label: 'configure' })
+  addEdge('text_store', 'osgi', 'CONTROL', { label: 'configure', curve: -0.2 })
   addEdge('osgi', 'reindex', 'CONTROL', { label: 'enable' })
   addEdge('reindex', 'success', 'DATA')
 }
 
-function getEdgePath(edge: Edge): string {
-  const fromNode = nodes.value.find(n => n.id === edge.from)
-  const toNode = nodes.value.find(n => n.id === edge.to)
-  if (!fromNode || !toNode) return ''
-  
+// Quadratic curve between the two nodes' glow rings; `mid` is the point on the curve at t = 0.5.
+function curveBetween(fromNode: Node, toNode: Node, curvature = 0.2) {
   const dx = toNode.x - fromNode.x
   const dy = toNode.y - fromNode.y
   const dist = Math.sqrt(dx * dx + dy * dy)
-  
-  const offsetFrom = (fromNode.radius || 28) + 8
-  const offsetTo = (toNode.radius || 28) + 8
-  
-  const startX = fromNode.x + (dx / dist) * offsetFrom
-  const startY = fromNode.y + (dy / dist) * offsetFrom
-  const endX = toNode.x - (dx / dist) * offsetTo
-  const endY = toNode.y - (dy / dist) * offsetTo
-  
-  const midX = (startX + endX) / 2
-  const midY = (startY + endY) / 2
-  const curvature = 0.2
-  const ctrlX = midX - dy * curvature
-  const ctrlY = midY + dx * curvature
-  
-  return `M ${startX} ${startY} Q ${ctrlX} ${ctrlY} ${endX} ${endY}`
+  const offsetFrom = (fromNode.radius || DEFAULT_RADIUS) + 8
+  const offsetTo = (toNode.radius || DEFAULT_RADIUS) + 8
+  const start = { x: fromNode.x + (dx / dist) * offsetFrom, y: fromNode.y + (dy / dist) * offsetFrom }
+  const end = { x: toNode.x - (dx / dist) * offsetTo, y: toNode.y - (dy / dist) * offsetTo }
+  const ctrl = { x: (start.x + end.x) / 2 - dy * curvature, y: (start.y + end.y) / 2 + dx * curvature }
+  const mid = { x: (start.x + end.x) / 4 + ctrl.x / 2, y: (start.y + end.y) / 4 + ctrl.y / 2 }
+  return { start, end, ctrl, mid }
+}
+
+function edgeGeometry(edge: Edge) {
+  const fromNode = nodes.value.find(n => n.id === edge.from)
+  const toNode = nodes.value.find(n => n.id === edge.to)
+  return fromNode && toNode ? curveBetween(fromNode, toNode, edge.curve) : null
+}
+
+function getEdgePath(edge: Edge): string {
+  const g = edgeGeometry(edge)
+  return g ? `M ${g.start.x} ${g.start.y} Q ${g.ctrl.x} ${g.ctrl.y} ${g.end.x} ${g.end.y}` : ''
 }
 
 function getEdgeLabelPosition(edge: Edge): { x: number; y: number } {
-  const fromNode = nodes.value.find(n => n.id === edge.from)
-  const toNode = nodes.value.find(n => n.id === edge.to)
-  if (!fromNode || !toNode) return { x: 0, y: 0 }
-  
-  const dx = toNode.x - fromNode.x
-  const dy = toNode.y - fromNode.y
-  const midX = (fromNode.x + toNode.x) / 2
-  const midY = (fromNode.y + toNode.y) / 2
-  const curvature = 0.2
-  
-  return {
-    x: midX - dy * curvature,
-    y: midY + dx * curvature - 12
-  }
+  return edgeGeometry(edge)?.mid ?? { x: 0, y: 0 }
 }
 
 function getEdgeStrokeDasharray(edge: Edge): string {
@@ -563,38 +573,22 @@ async function playAnimation() {
 }
 
 async function animatePacket(fromId: string, toId: string, color: string): Promise<void> {
-  const fromNode = nodes.value.find(n => n.id === fromId)
-  const toNode = nodes.value.find(n => n.id === toId)
-  if (!fromNode || !toNode) return
+  const edge = edges.value.find(e => e.from === fromId && e.to === toId)
+  const g = edge && edgeGeometry(edge)
+  if (!g) return
   
   const packetId = `${fromId}-${toId}-${Date.now()}`
   const duration = 600
   const startTime = performance.now()
-  
-  const dx = toNode.x - fromNode.x
-  const dy = toNode.y - fromNode.y
-  const dist = Math.sqrt(dx * dx + dy * dy)
-  const offsetFrom = (fromNode.radius || 28) + 8
-  const offsetTo = (toNode.radius || 28) + 8
-  
-  const startX = fromNode.x + (dx / dist) * offsetFrom
-  const startY = fromNode.y + (dy / dist) * offsetFrom
-  const endX = toNode.x - (dx / dist) * offsetTo
-  const endY = toNode.y - (dy / dist) * offsetTo
-  
-  const midX = (startX + endX) / 2
-  const midY = (startY + endY) / 2
-  const curvature = 0.2
-  const ctrlX = midX - dy * curvature
-  const ctrlY = midY + dx * curvature
+  const { start, ctrl, end } = g
   
   return new Promise(resolve => {
     function animate() {
       const elapsed = performance.now() - startTime
       const t = Math.min(elapsed / duration, 1)
       
-      const x = (1-t)*(1-t)*startX + 2*(1-t)*t*ctrlX + t*t*endX
-      const y = (1-t)*(1-t)*startY + 2*(1-t)*t*ctrlY + t*t*endY
+      const x = (1-t)*(1-t)*start.x + 2*(1-t)*t*ctrl.x + t*t*end.x
+      const y = (1-t)*(1-t)*start.y + 2*(1-t)*t*ctrl.y + t*t*end.y
       
       const existing = animationPackets.value.find(p => p.id === packetId)
       if (existing) {
@@ -615,9 +609,8 @@ async function animatePacket(fromId: string, toId: string, color: string): Promi
   })
 }
 
-onMounted(() => {
-  initFlow()
-})
+// Build the graph during setup so it is part of the pre-rendered HTML.
+initFlow()
 </script>
 
 <template>
@@ -631,17 +624,21 @@ onMounted(() => {
     
     <div class="flow-wrapper">
       <svg 
-        :viewBox="`0 0 ${width} ${height}`"
+        :viewBox="`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`"
+        :style="{ minWidth: `${Math.round(viewBox.w * MIN_SCALE)}px` }"
         class="flow-svg"
       >
         <defs>
-          <marker id="oak-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#4ade80" />
+          <!-- One arrowhead per edge colour, so each arrow matches its line -->
+          <marker
+            v-for="color in arrowColors"
+            :key="color"
+            :id="arrowId(color)"
+            markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"
+          >
+            <polygon points="0 0, 10 3.5, 0 7" :fill="color" />
           </marker>
-          <marker id="oak-arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444" />
-          </marker>
-          <filter id="oak-glow">
+          <filter :id="`${uid}-glow`">
             <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
             <feMerge>
               <feMergeNode in="coloredBlur"/>
@@ -652,26 +649,17 @@ onMounted(() => {
         
         <!-- Edges -->
         <g class="edges">
-          <g v-for="edge in edges" :key="`${edge.from}-${edge.to}`">
-            <path
-              :d="getEdgePath(edge)"
-              fill="none"
-              :stroke="edge.color"
-              :stroke-width="edge.width || 2"
-              :stroke-dasharray="getEdgeStrokeDasharray(edge)"
-              :marker-end="edge.type === 'DELETE' ? 'url(#oak-arrow-red)' : 'url(#oak-arrow)'"
-              class="edge-path"
-            />
-            <text
-              v-if="edge.label"
-              :x="getEdgeLabelPosition(edge).x"
-              :y="getEdgeLabelPosition(edge).y"
-              text-anchor="middle"
-              class="edge-label"
-            >
-              {{ edge.label }}
-            </text>
-          </g>
+          <path
+            v-for="edge in edges"
+            :key="`${edge.from}-${edge.to}`"
+            :d="getEdgePath(edge)"
+            fill="none"
+            :stroke="edge.color"
+            :stroke-width="edge.width || 2"
+            :stroke-dasharray="getEdgeStrokeDasharray(edge)"
+            :marker-end="`url(#${arrowId(edge.color)})`"
+            class="edge-path"
+          />
         </g>
         
         <!-- Nodes -->
@@ -701,6 +689,7 @@ onMounted(() => {
               fill="#0a1628"
               :stroke="node.color"
               stroke-width="2"
+              :filter="hoveredNode?.id === node.id ? `url(#${uid}-glow)` : undefined"
               class="node-circle"
             />
             <text
@@ -721,6 +710,22 @@ onMounted(() => {
             </g>
           </g>
         </g>
+
+        <!-- Edge labels sit on their curve, above nodes and edges -->
+        <g class="edge-labels">
+          <template v-for="edge in edges" :key="`${edge.from}-${edge.to}`">
+            <text
+              v-if="edge.label"
+              :x="getEdgeLabelPosition(edge).x"
+              :y="getEdgeLabelPosition(edge).y"
+              text-anchor="middle"
+              dominant-baseline="central"
+              class="edge-label"
+            >
+              {{ edge.label }}
+            </text>
+          </template>
+        </g>
         
         <!-- Animation packets -->
         <g class="packets">
@@ -731,7 +736,7 @@ onMounted(() => {
             :cy="packet.y"
             r="6"
             :fill="packet.color"
-            filter="url(#oak-glow)"
+            :filter="`url(#${uid}-glow)`"
             class="packet"
           />
         </g>
@@ -802,7 +807,7 @@ onMounted(() => {
   background: #030712;
   border: 1px solid rgba(74, 222, 128, 0.2);
   border-radius: 12px;
-  overflow: hidden;
+  overflow-x: auto; /* scroll rather than shrink below MIN_SCALE */
 }
 
 .flow-svg {
@@ -820,10 +825,15 @@ onMounted(() => {
 }
 
 .edge-label {
-  fill: rgba(255, 255, 255, 0.6);
+  fill: rgba(255, 255, 255, 0.75);
   font-size: 11px;
   font-family: 'JetBrains Mono', monospace;
   font-weight: 500;
+  /* dark halo keeps the label readable where it crosses a line */
+  paint-order: stroke;
+  stroke: #030712;
+  stroke-width: 4px;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 
@@ -844,10 +854,6 @@ onMounted(() => {
   opacity: 0.5;
 }
 
-.node.hovered .node-circle {
-  filter: url(#oak-glow);
-}
-
 .node-circle {
   transition: filter 0.2s ease;
 }
@@ -857,11 +863,14 @@ onMounted(() => {
 }
 
 .node-label {
-  fill: rgba(255, 255, 255, 0.7);
-  font-size: 10px;
+  fill: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
   font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  /* same halo as edge labels: an arrow entering from below passes under the text */
+  paint-order: stroke;
+  stroke: #030712;
+  stroke-width: 4px;
+  stroke-linejoin: round;
   pointer-events: none;
 }
 

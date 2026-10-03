@@ -195,7 +195,7 @@ graph LR
         A3[data00002a.tar]
     end
     
-    subgraph "After Compaction + Cleanup"
+    subgraph "After GC"
         B1[data00001b.tar]
         B2[data00002a.tar]
         B3[data00003a.tar<br/>compacted head + checkpoints]

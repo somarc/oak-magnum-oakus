@@ -17,7 +17,7 @@ $ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 ## What It Does
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Scan all TAR files] --> B[Find root candidates]
     B --> C[Sort by timestamp]
     C --> D[Drop newest corrupt candidates]

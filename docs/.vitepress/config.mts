@@ -1,14 +1,15 @@
 import { defineConfig } from 'vitepress'
-import { withMermaid } from 'vitepress-plugin-mermaid'
 
-export default withMermaid(
-  defineConfig({
+// Emoji (including ZWJ sequences) inside h1 headings; see the h1 gradient in custom.css.
+const EMOJI = /\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}\uFE0F?)*/gu
+
+export default defineConfig({
     title: "The Magnum OAKus",
     description: "Production-grade recovery procedures for Apache Oak SegmentStore (TarMK)",
     
     base: '/oak-magnum-oakus/', // GitHub Pages deployment
     cleanUrls: true,
-    appearance: 'dark',
+    appearance: 'force-dark', // diagrams and custom styles are designed for dark only
     ignoreDeadLinks: true,
     
     head: [
@@ -129,27 +130,53 @@ export default withMermaid(
       }
     },
 
-    mermaid: {
-      theme: 'dark',
-      themeVariables: {
-        primaryColor: '#4ade80',
-        primaryTextColor: '#fff',
-        primaryBorderColor: '#22c55e',
-        lineColor: '#4ade80',
-        secondaryColor: '#0a1628',
-        tertiaryColor: '#0f2847',
-        background: '#030712',
-        mainBkg: '#0a1628',
-        nodeBorder: '#4ade80',
-      }
-    },
-
     markdown: {
       lineNumbers: true,
       theme: {
         light: 'github-light',
         dark: 'github-dark'
+      },
+      config(md) {
+        // ```mermaid fences render client-side in <MermaidDiagram> (theme/components).
+        const fence = md.renderer.rules.fence!
+        md.renderer.rules.fence = (tokens, idx, options, env, self) => {
+          const token = tokens[idx]
+          if (token.info.trim() === 'mermaid') {
+            return `<MermaidDiagram code="${encodeURIComponent(token.content)}" />`
+          }
+          return fence(tokens, idx, options, env, self)
+        }
+
+        // Wrap emoji in h1 so the gradient text fill does not flatten them.
+        // Runs after the anchor plugin, so slugs and page titles are unchanged.
+        md.core.ruler.push('oak_h1_emoji', (state) => {
+          const token = (type: string, content: string) => {
+            const t = new state.Token(type, '', 0)
+            t.content = content
+            return t
+          }
+          state.tokens.forEach((open, i) => {
+            const inline = state.tokens[i + 1]
+            if (open.type !== 'heading_open' || open.tag !== 'h1' || !inline?.children) return
+            inline.children = inline.children.flatMap((child) => {
+              if (child.type !== 'text') return [child]
+              const parts = []
+              let last = 0
+              for (const match of child.content.matchAll(EMOJI)) {
+                if (match.index > last) parts.push(token('text', child.content.slice(last, match.index)))
+                parts.push(
+                  token('html_inline', '<span class="h1-emoji">'),
+                  token('text', match[0]),
+                  token('html_inline', '</span>')
+                )
+                last = match.index + match[0].length
+              }
+              if (!parts.length) return [child]
+              if (last < child.content.length) parts.push(token('text', child.content.slice(last)))
+              return parts
+            })
+          })
+        })
       }
     }
-  })
-)
+})

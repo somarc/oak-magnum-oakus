@@ -11,13 +11,13 @@ sequenceDiagram
     participant Async as /:async Node
     participant Index as Lucene Index
     
-    Async-->>Indexer: Read reference /:async@async = uuid-1
+    Async-->>Indexer: Read reference<br/>/:async@async = uuid-1
     Indexer->>CP: Create new checkpoint
     CP-->>Indexer: checkpoint-uuid-2
-    Indexer->>Async: Add uuid-2 to /:async@async-temp
-    Indexer->>Index: Process changes between uuid-1 and uuid-2
-    Indexer->>Async: Update /:async@async = uuid-2
-    Indexer->>CP: Release checkpoint-uuid-1
+    Indexer->>Async: Add uuid-2 to<br/>/:async@async-temp
+    Indexer->>Index: Process changes<br/>between uuid-1 and uuid-2
+    Indexer->>Async: Update<br/>/:async@async = uuid-2
+    Indexer->>CP: Release<br/>checkpoint-uuid-1
 ```
 
 ## The /:async Node

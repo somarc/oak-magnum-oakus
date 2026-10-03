@@ -160,7 +160,7 @@ $ java -jar oak-run-*.jar compact --tail /path/to/segmentstore
 ### The Danger
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Corrupted Segment] --> B[Compaction Runs]
     B --> C{Reachable from head/checkpoints?}
     C -->|yes| D[SNFE: run aborted, nothing fixed]

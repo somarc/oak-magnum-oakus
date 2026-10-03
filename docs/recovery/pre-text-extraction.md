@@ -35,7 +35,7 @@ Only during a **reindex**, by AEM (`DataStoreTextProviderService`) or by `oak-ru
 
 ## The Pre-Text Extraction Workflow
 
-<OakFlowGraph flow="pre-text-extraction" :height="480" />
+<OakFlowGraph flow="pre-text-extraction" />
 
 ### Three Phases
 

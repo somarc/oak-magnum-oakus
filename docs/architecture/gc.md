@@ -16,8 +16,8 @@ graph LR
     style R1 fill:#3b82f6
     style R2 fill:#3b82f6
     style R3 fill:#3b82f6
-    style HEAD fill:#4ade80
-    style S4 fill:#4ade80
+    style HEAD fill:#4ade80,color:#030712
+    style S4 fill:#4ade80,color:#030712
 ```
 
 **How Roots Work:**
@@ -28,7 +28,7 @@ graph LR
 
 ## The GC Cycle
 
-<OakFlowGraph flow="gc-cycle" :height="450" />
+<OakFlowGraph flow="gc-cycle" />
 
 ### Three Phases
 

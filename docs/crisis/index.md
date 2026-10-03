@@ -127,7 +127,7 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 
 ## ✅ Step 4: Choose Recovery Path
 
-<OakFlowGraph flow="recovery-decision" :height="400" />
+<OakFlowGraph flow="recovery-decision" />
 
 ### Option A: Journal Recovery (simpler procedure, loses recent changes, SAFE)
 

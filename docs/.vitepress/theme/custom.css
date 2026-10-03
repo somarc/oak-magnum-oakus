@@ -122,6 +122,11 @@
   background-clip: text;
 }
 
+/* Emoji keep their own colours inside the gradient h1 (wrapped in config.mts) */
+.dark h1 .h1-emoji {
+  -webkit-text-fill-color: initial;
+}
+
 .dark h2 {
   color: #86efac;
 }
@@ -378,7 +383,7 @@
 .dark table {
   border: 1px solid rgba(74, 222, 128, 0.2);
   border-radius: 8px;
-  overflow: hidden;
+  overflow-x: auto; /* keep VitePress's horizontal scroll for wide tables */
 }
 
 .dark th {

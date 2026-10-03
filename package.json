@@ -10,9 +10,8 @@
   },
   "devDependencies": {
     "vitepress": "^1.5.0",
-    "vitepress-plugin-mermaid": "^2.0.17",
     "mermaid": "^11.4.0",
-    "vue": "^3.4.0"
+    "vue": "^3.5.0"
   },
   "keywords": [
     "oak",

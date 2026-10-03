@@ -13,7 +13,7 @@ If you're seeing `SegmentNotFoundException`, start with the **[SNFE Playbook](/r
 
 ## Recovery Decision Tree
 
-<OakFlowGraph flow="recovery-decision" :height="400" />
+<OakFlowGraph flow="recovery-decision" />
 
 ## Recovery Options Overview
 

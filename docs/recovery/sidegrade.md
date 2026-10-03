@@ -26,7 +26,7 @@ This uses `oak-upgrade-*.jar`, NOT `oak-run-*.jar`. They are separate tools (`oa
 ## What It Does
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Corrupted Repo] --> B[Traverse from HEAD]
     B --> C{Unreadable node?}
     C -->|no| D[Copy node]

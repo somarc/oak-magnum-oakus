@@ -39,7 +39,7 @@ graph TB
     OakCore --> MongoMK
     OakCore --> RDBMK
     
-    style TarMK fill:#4ade80,stroke:#22c55e,stroke-width:3px
+    style TarMK fill:#4ade80,stroke:#22c55e,stroke-width:3px,color:#030712
     style MongoMK fill:#3b82f6,stroke:#2563eb
     style RDBMK fill:#8b5cf6,stroke:#7c3aed
 ```
@@ -50,7 +50,7 @@ graph TB
 
 ### Segments: The Fundamental Unit
 
-<OakFlowGraph flow="segment-structure" :height="380" />
+<OakFlowGraph flow="segment-structure" />
 
 A segment is the **atomic unit of storage** in Oak Segment Tar:
 
@@ -156,16 +156,16 @@ crx-quickstart/repository/segmentstore/
 
 ### TAR File Lifecycle
 
-<OakFlowGraph flow="tar-lifecycle" :height="420" />
+<OakFlowGraph flow="tar-lifecycle" />
 
 ### TAR File Structure
 
 ```
 TAR File Structure:
 ┌─────────────────────────────────────┐
-│ Segment 1 data (up to 256KB)       │ ← Immutable content
+│ Segment 1 data (up to 256KB)        │ ← Immutable content
 ├─────────────────────────────────────┤
-│ Segment 2 data (up to 256KB)       │
+│ Segment 2 data (up to 256KB)        │
 ├─────────────────────────────────────┤
 │ ...more segments...                 │
 ├─────────────────────────────────────┤

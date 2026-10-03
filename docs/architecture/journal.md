@@ -46,7 +46,7 @@ sequenceDiagram
     Oak->>TAR: Create new segments
     Oak->>App: Commit success
     Note over Oak: HEAD updated in memory
-    Oak->>Journal: Flush (every 5 s, if HEAD changed): append new revision
+    Oak->>Journal: Flush (every 5 s,<br/>if HEAD changed):<br/>append new revision
 ```
 
 ### On Startup

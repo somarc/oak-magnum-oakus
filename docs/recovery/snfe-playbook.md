@@ -24,20 +24,20 @@ oak-run check fails with: Segment xyz not found
 
 ```mermaid
 flowchart TD
-    A[SNFE Error] --> B{When does it occur?}
-    B -->|AEM startup| C{Can oak-run check run?}
-    B -->|During operation| D{Consistent or intermittent?}
-    B -->|During compaction| E[STOP! See Compaction Danger]
+    A[SNFE Error] --> B{When does<br/>it occur?}
+    B -->|AEM startup| C{Can oak-run<br/>check run?}
+    B -->|During<br/>compaction| E[STOP! See<br/>Compaction Danger]
+    B -->|During operation| D{Consistent or<br/>intermittent?}
     
-    C -->|Yes, finds good rev| F[Journal Recovery]
-    C -->|Yes, no good rev| G[Sidegrade]
-    C -->|No, check fails| H[Restore from Backup]
+    C -->|Yes, finds<br/>good rev| F[Journal<br/>Recovery]
+    C -->|Yes, no<br/>good rev| G[Sidegrade]
+    C -->|No, check<br/>fails| H[Restore from<br/>Backup]
     
-    D -->|Consistent path| I[Surgical Removal]
-    D -->|Intermittent| J[Check for Race Condition]
+    D -->|Consistent<br/>path| I[Surgical<br/>Removal]
+    D -->|Intermittent| J[Check for Race<br/>Condition]
     
-    style H fill:#ef4444
-    style E fill:#ef4444
+    style H fill:#991b1b,stroke:#ef4444,color:#fff
+    style E fill:#991b1b,stroke:#ef4444,color:#fff
 ```
 
 ## SNFE Categories

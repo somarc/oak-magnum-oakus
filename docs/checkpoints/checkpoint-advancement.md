@@ -36,12 +36,14 @@ This is the **most confusing scenario** in Oak troubleshooting:
 ```mermaid
 flowchart TD
     subgraph "Detection Tools"
+        direction TB
         C[count-nodes deep] --> B[Traverses from HEAD]
         B --> D[Current JCR Tree]
         D --> E[All blobs exist ✅]
     end
     
     subgraph "Indexing Process"
+        direction TB
         F[Async Indexer] --> G[Reads from OLD checkpoint]
         G --> H[Old Segments]
         H --> I[References DELETED blobs ❌]
@@ -50,9 +52,9 @@ flowchart TD
         K --> F
     end
     
-    style E fill:#22c55e
-    style I fill:#ef4444
-    style J fill:#ef4444
+    style E fill:#22c55e,color:#030712
+    style I fill:#991b1b,stroke:#ef4444,color:#fff
+    style J fill:#991b1b,stroke:#ef4444,color:#fff
 ```
 
 ### The Timeline of Invisible Blobs

@@ -32,7 +32,7 @@ Want to remove corrupted content rather than rolling back
 ## Overview
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[count-nodes] --> B[Identify bad paths]
     B --> C[Review log file]
     C --> D[remove-nodes dry-run]
