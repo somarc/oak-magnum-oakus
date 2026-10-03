@@ -16,7 +16,7 @@ Follow the boxes in order. Check them off as you go. **DO NOT SKIP BOXES.**
 |--------|--------------|---------|
 | `SegmentNotFoundException: Segment xyz not found` | Segment corruption or missing TAR | [Step 3](#✅-step-3-run-diagnostic-command) |
 | `TarMK refuses to start` / `Unable to access revision …, rewinding...` | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
-| `IllegalStateException: … is in use by another store.` | Store already open in the same JVM (`repo.lock` held) | [Identify Repo Type](/crisis/identify-repo) |
+| `IllegalStateException: … is in use by another store.` | Store already open in the same JVM (`repo.lock` held) | [Repository Won't Start](/reference/troubleshooting#repository-won-t-start) |
 | `OutOfMemoryError` during startup | Heap too small for repo size | Not corruption — increase heap |
 | Disk 100% full | Checkpoint bloat or GC not running | [Checkpoints](/checkpoints/) |
 | `DataStoreException: Record does not exist` | Missing blob in DataStore | [DataStore Consistency](/datastore/consistency) |

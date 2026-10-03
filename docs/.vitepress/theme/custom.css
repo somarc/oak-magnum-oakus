@@ -48,48 +48,93 @@
 /* Hero gradient - forest theme */
 :root {
   --vp-home-hero-name-color: transparent;
-  --vp-home-hero-name-background: linear-gradient(135deg, #86efac 0%, #4ade80 50%, #22c55e 100%);
+  --vp-home-hero-name-background: linear-gradient(135deg, #4ade80 0%, #22c55e 50%, #16a34a 100%);
   --vp-home-hero-image-background-image: linear-gradient(135deg, rgba(74, 222, 128, 0.3) 0%, rgba(34, 197, 94, 0.3) 100%);
   --vp-home-hero-image-filter: blur(44px);
 }
 
-/* Hero tagline - improved contrast */
-.dark .VPHero .tagline {
-  color: rgba(255, 255, 255, 0.85) !important;
+/* Home hero: only the name carries the gradient (the global h1 gradient would paint the subtitle too) */
+.dark .VPHome .VPHero .heading {
+  background: none;
+  -webkit-text-fill-color: currentColor;
 }
 
-/* Feature card titles - brighter green for better contrast */
-.dark .VPFeature .title {
-  color: #86efac !important;
+.VPHome .VPHero .text {
+  color: var(--vp-c-text-1);
 }
 
-.dark .VPFeature .details {
-  color: rgba(255, 255, 255, 0.75);
+.dark .VPHome .VPHero .tagline {
+  color: rgba(255, 255, 255, 0.85);
 }
 
-/* Brand buttons */
-.VPButton.brand {
-  background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
-  border: none;
-  box-shadow: 0 0 20px rgba(74, 222, 128, 0.3);
-  color: #030712;
-  font-weight: 600;
+@media (min-width: 640px) {
+  .VPHome .VPHero .text {
+    font-size: 36px;
+    line-height: 44px;
+  }
 }
 
-.VPButton.brand:hover {
-  box-shadow: 0 0 30px rgba(74, 222, 128, 0.5);
-  transform: translateY(-1px);
+@media (min-width: 960px) {
+  .VPHome .VPHero {
+    padding-top: calc(var(--vp-nav-height) + 56px);
+    padding-bottom: 40px;
+  }
+
+  .VPHome .VPHero .text {
+    font-size: 40px;
+    line-height: 48px;
+  }
 }
 
-/* Alt button for crisis */
-.VPButton.alt {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  border: none;
-  color: #fff;
+/* Small tree on phones, so the crisis button and checklist come first */
+@media (max-width: 639px) {
+  .VPHome .VPHero .image {
+    margin: -48px -24px -8px;
+  }
+
+  .VPHome .VPHero .image-container {
+    width: 160px;
+    height: 160px;
+  }
+
+  .VPHome .VPHero .image-bg {
+    width: 120px;
+    height: 120px;
+  }
+
+  .VPHome .VPHero .image-container .image-src {
+    max-width: 112px;
+    max-height: 112px;
+  }
+
+  .VPHome .VPHero .text {
+    font-size: 26px;
+    line-height: 34px;
+  }
 }
 
-.VPButton.alt:hover {
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+/* Home hero buttons: brand = the one primary action (crisis, red); alt = secondary (corpus, quiet) */
+.VPHome .VPHero {
+  --vp-button-brand-bg: #dc2626;
+  --vp-button-brand-hover-bg: #ef4444;
+  --vp-button-brand-active-bg: #b91c1c;
+  --vp-button-brand-text: #fff;
+  --vp-button-brand-hover-text: #fff;
+  --vp-button-brand-active-text: #fff;
+  --vp-button-alt-bg: transparent;
+  --vp-button-alt-hover-bg: rgba(74, 222, 128, 0.08);
+  --vp-button-alt-active-bg: rgba(74, 222, 128, 0.14);
+  --vp-button-alt-border: rgba(74, 222, 128, 0.45);
+  --vp-button-alt-hover-border: #4ade80;
+  --vp-button-alt-active-border: #4ade80;
+  --vp-button-alt-text: #86efac;
+  --vp-button-alt-hover-text: #bbf7d0;
+  --vp-button-alt-active-text: #bbf7d0;
+}
+
+.VPHome .VPHero .VPButton.brand {
+  font-weight: 700;
+  box-shadow: 0 8px 28px -6px rgba(239, 68, 68, 0.55);
 }
 
 /* Blockquotes */
