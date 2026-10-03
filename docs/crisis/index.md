@@ -188,7 +188,7 @@ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 ```
 
 ::: info What `:remove-nodes` acts on
-It deletes nodes for `Warning: Missing blob at … DataStoreException: Record …` lines and datastore-consistency `aa/bb/cc/<hex>,<path>` lines (its `Warning: Unable to read node` handling is buggy — don't rely on it), and refuses paths shallower than 3 levels. `Warning: Missing segment at …` lines are only logged as `[WARN]`, never deleted; remove those paths one at a time with the fork's `:remove-node <path>` (no dry-run, no log). Each deletion is merged immediately — there is no undo.
+It deletes nodes for `Warning: Missing blob at … DataStoreException: Record …` lines, `Warning: Unable to read node …` lines and datastore-consistency `aa/bb/cc/<hex>,<path>` lines, and refuses paths shallower than 3 levels. `Warning: Missing segment at …` lines are only logged as `[WARN]`, never deleted; the report prints the `:remove-node <path>` to run for each (no dry-run, no log). Each deletion is merged immediately — there is no undo.
 :::
 
 **Verify:**

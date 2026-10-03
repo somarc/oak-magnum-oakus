@@ -112,8 +112,6 @@ done
 
 # Register the commands in the console
 perl -0pi -e 's/new ExportCommand\(shell\)/new ExportCommand(shell),\n                new CountNodesCommand(shell), new RemoveNodeCommand(shell),\n                new RemoveNodesCommand(shell), new BinaryPathsCommand(shell)/' $C/GroovyConsole.groovy
-# Fix the binary-mode import (without it, segment blobs are classified as external)
-perl -pi -e 's/oak\.plugins\.segment\.SegmentBlob/oak.segment.SegmentBlob/' $C/commands/CountNodesCommand.groovy
 
 # Build: JDK 11 for 1.22.x – 1.88.0, JDK 17+ for 2.4.0
 cd oak-$V/oak-run
@@ -133,11 +131,7 @@ Only `oak-run` is built; every other Oak module comes from Maven Central at the 
 | `:binary-paths` | `:binary-paths <blob-ids-file>` | No | none |
 
 - `:count-nodes` always walks the whole tree from `/`; there is no path argument. Pick at most one of the three binary modes. It logs `Warning: Missing segment at <path>: …`, `Warning: Missing blob at <path>: …`, and `Warning: Unable to read node <path>: …`.
-- `:remove-nodes` deletes only for datastore-consistency lines (`aa/bb/cc/<id>,<path>`) and `Missing blob … DataStoreException: Record` lines. **`Missing segment` lines are only counted and logged; those nodes are never deleted.** It refuses paths shallower than depth 3.
+- `:remove-nodes` deletes for datastore-consistency lines (`aa/bb/cc/<id>,<path>`), `Missing blob … DataStoreException: Record` lines, and `Unable to read node` lines; a missing DAM original removes the whole asset. **`Missing segment` lines are only logged, never deleted**; the report prints the `:remove-node <path>` to run for each. It refuses paths shallower than depth 3.
 - `:remove-node` refuses `/` and top-level nodes.
 - `:binary-paths` matches external DataStore blobs only. Blobs stored inside segments have no content identity, so they never match.
 
-::: warning Known issues in the fork code
-- `Warning: Unable to read node` lines written by `:count-nodes` are not parsed correctly by `:remove-nodes`, so those paths are usually not found. Review them in the log and remove them one at a time with `:remove-node <path>`, dropping the trailing `/` that `:count-nodes` prints.
-- `:help` shows built-in fallback text for these commands; their `.properties` help files are never loaded.
-:::

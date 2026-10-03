@@ -272,8 +272,8 @@ $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 # → ALWAYS dry-run first to validate what will be deleted
 > :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log
 # → Only run actual removal after validating dry-run results
-# → remove-nodes never deletes "Missing segment" lines (only missing-blob lines);
-#   remove those paths one by one with :remove-node <path> (drop the trailing /)
+# → remove-nodes never deletes "Missing segment" lines; its report prints
+#   the :remove-node <path> to run for each
 
 # Scenario B: No good revision found ❌
 # Output: "No good revision found"

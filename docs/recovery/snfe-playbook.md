@@ -111,7 +111,7 @@ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
 # Review ./count-nodes-snfe-yyyyMMdd-HHmmss.log (written to the current directory)
 
-# Missing-segment paths: remove one by one (no dry-run; drop the trailing "/")
+# Missing-segment paths: remove one by one (no dry-run); a :remove-nodes report prints each command
 > :remove-node /content/dam/2024/Q3
 
 # Missing-blob lines: remove-nodes (dry-run first!, exact file name, no wildcard)

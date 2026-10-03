@@ -36,7 +36,7 @@ When running `oak-run console`:
 |---------|-------------|
 | `:help` | Show available commands |
 | `:count-nodes` | Count nodes and detect corruption ⚠️ fork only |
-| `:remove-nodes` | Remove nodes listed in a log (missing-blob lines only) ⚠️ fork only |
+| `:remove-nodes` | Remove nodes listed in a log (not `Missing segment` lines) ⚠️ fork only |
 | `:remove-node` | Remove one node immediately, no dry-run ⚠️ fork only |
 | `:refresh` | Refresh repository state |
 | `:exit` | Exit console |

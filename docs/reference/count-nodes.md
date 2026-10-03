@@ -121,7 +121,7 @@ Problem lines start with `Warning: Missing segment at`, `Warning: Missing blob a
 ```
 
 ::: info `:remove-nodes` skips `Missing segment` lines
-`:remove-nodes` deletes only for `Missing blob … DataStoreException: Record` lines (and datastore-consistency `aa/bb/cc/<hex>,<path>` lines), refuses paths shallower than 3 levels (a missing DAM `renditions/original` blob deletes the **whole asset** node), and writes its report to `remove-nodes-YYYYMMDD-HHmmss.log` in the current directory. `Warning: Missing segment at …` lines are only logged as `[WARN]` — remove those paths one at a time with `:remove-node <path>` (needs `--read-write`, no dry-run). Real (non-dry-run) removal needs `console --read-write`.
+`:remove-nodes` deletes for `Missing blob … DataStoreException: Record` lines, `Unable to read node` lines, and datastore-consistency `aa/bb/cc/<hex>,<path>` lines, refuses paths shallower than 3 levels (a missing DAM `renditions/original` blob deletes the **whole asset** node), and writes its report to `remove-nodes-YYYYMMDD-HHmmss.log` in the current directory. `Warning: Missing segment at …` lines are only logged as `[WARN]` — remove those paths one at a time with `:remove-node <path>` (the report prints the exact command; needs `--read-write`, no dry-run). Real (non-dry-run) removal needs `console --read-write`.
 :::
 
 ### Repository Health Check

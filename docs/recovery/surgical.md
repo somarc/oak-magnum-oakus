@@ -110,7 +110,7 @@ Warning: Unable to read node /var/audit/2024/01/15/corrupted-entry/: ...
 `:remove-nodes` only deletes for these input lines:
 - `Warning: Missing blob at <path>: org.apache.jackrabbit.core.data.DataStoreException: Record …` (missing DataStore binaries)
 - datastore consistency-check lines `aa/bb/cc/<64-hex blob id>,<path>`
-- `Warning: Unable to read node …` lines (it splits these on `" due to "`, so count-nodes' `<path>: <msg>` format usually won't resolve to a node)
+- `Warning: Unable to read node <path>/: …` lines (removes that node)
 
 **`Warning: Missing segment at …` lines are only counted and logged as `[WARN]` — they are never deleted.** For SNFE paths, review them and remove each one with [`:remove-node`](#single-node-removal).
 :::
@@ -313,7 +313,7 @@ If check passes clean, start AEM.
 
 ## Single Node Removal
 
-For removing a single known path — this is how you remove the `Missing segment at` paths from the count-nodes log (drop the trailing `/`):
+For removing a single known path — this is how you remove the `Missing segment at` paths from the count-nodes log (the `:remove-nodes` report prints the exact `:remove-node` command for each):
 
 ```bash
 # In oak-run console (opened with --read-write):

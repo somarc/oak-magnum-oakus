@@ -99,7 +99,7 @@ RemoveNodesCommand completed. Full detailed log at: /current/dir/remove-nodes-YY
 ```
 
 ::: info `:remove-nodes` does not delete `Missing segment` lines
-It deletes nodes only for missing-blob (`DataStoreException: Record`) and datastore-consistency (`aa/bb/cc/<hex>,<path>`) lines, and refuses paths shallower than 3 levels. `Warning: Missing segment at …` lines are logged as `[WARN]` and skipped — remove those paths with `:remove-node <path>`.
+It deletes nodes for missing-blob (`DataStoreException: Record`), unreadable-node (`Unable to read node`) and datastore-consistency (`aa/bb/cc/<hex>,<path>`) lines, and refuses paths shallower than 3 levels. `Warning: Missing segment at …` lines are logged as `[WARN]` and skipped, with the `:remove-node <path>` to run for each.
 :::
 
 ### Check Checkpoints

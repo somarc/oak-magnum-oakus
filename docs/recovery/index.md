@@ -62,7 +62,7 @@ cat count-nodes-snfe-*.log
 > :exit
 ```
 
-`:remove-nodes` deletes only for missing-blob lines. `Missing segment` lines are logged, never deleted: remove those paths one by one with `:remove-node <path>`. See [Surgical Removal](/recovery/surgical).
+`:remove-nodes` deletes for missing-blob and unreadable-node lines. `Missing segment` lines are logged, never deleted: the report prints the `:remove-node <path>` to run for each. See [Surgical Removal](/recovery/surgical).
 
 ### 4. Sidegrade (Last Resort)
 
