@@ -22,66 +22,91 @@ oak-run check fails with: Segment xyz not found
 
 ## Quick Decision Tree
 
+Every SNFE starts the same way: stop GC from deleting anything, take a copy, and let `oak-run check` decide. What it prints picks the path.
+
 ```mermaid
 flowchart TD
-    A[SNFE Error] --> B{When does<br/>it occur?}
-    B -->|AEM startup| C{Can oak-run<br/>check run?}
-    B -->|During<br/>compaction| E[STOP! See<br/>Compaction Danger]
-    B -->|During operation| D{Consistent or<br/>intermittent?}
-    
-    C -->|Yes, finds<br/>good rev| F[Journal<br/>Recovery]
-    C -->|Yes, no<br/>good rev| G[Journal<br/>Recovery,<br/>then<br/>Sidegrade]
-    C -->|No, check<br/>fails| H[Restore from<br/>Backup]
-    
-    D -->|Consistent<br/>path| I[Surgical<br/>Removal]
-    D -->|Intermittent| J[Check for Race<br/>Condition]
-    
+    A["SegmentNotFoundException"] --> B["Pause GC · stop AEM ·<br/>copy segmentstore/"]
+    B --> C["Run oak-run check"]
+    C --> D{{"What does check print?"}}
+    D -->|"Latest good revision<br/>… is a revision"| E["Recoverable<br/>Path A or B"]
+    D -->|"Overall none,<br/>Head has a revision"| F["Checkpoint broken<br/>remove that checkpoint"]
+    D -->|"No good<br/>revision found"| G["Partially recoverable<br/>Path D, else A, then C"]
+    D -->|"A stack trace,<br/>no result"| H["Bricked<br/>Path D"]
+
     style H fill:#991b1b,stroke:#ef4444,color:#fff
-    style E fill:#991b1b,stroke:#ef4444,color:#fff
 ```
 
-## SNFE Categories
+The paths are in [Step 2](#step-2-choose-recovery-path). One exception to the last branch: if the stack trace runs through `SegmentNodeStore.checkpoints`, the store did open and only listing its checkpoints failed. Run `check --head` ([details](/recovery/check#🚨-critical-bricked-vs-recoverable-distinction)).
 
-| Category | Cause | Recovery Path |
-|----------|-------|---------------|
-| **Startup SNFE** | Corrupted HEAD revision | [Journal Recovery](/recovery/journal) or [Sidegrade](/recovery/sidegrade) |
-| **Runtime SNFE** | Specific path corrupted | [Surgical Removal](/recovery/surgical) |
-| **Compaction SNFE** | GC hit corruption | **STOP compaction immediately** |
-| **Intermittent SNFE** | Long-lived sessions + tail GC | [GC Configuration](/architecture/gc#long-lived-sessions-tail-compaction) |
-| **Check SNFE** | Repository bricked | Restore from backup |
+## Where You Saw It
+
+The place an SNFE shows up doesn't change the first moves, but it tells you what has already happened:
+
+| Where | What it tells you |
+|-------|-------------------|
+| `error.log` during normal operation | A read reached a missing segment, usually damage under the path being read. Damage stays silent for paths nobody reads, so an SNFE that appears only now and then is not noise ([why](/architecture/bricked#_1-a-missing-segment-is-silent-until-something-reads-it)) |
+| AEM startup | Something read during startup is missing. The head's own segment exists, otherwise Oak would have rewound to an older revision (`Unable to access revision …, rewinding...`) |
+| A GC run: `compaction encountered an error` | Compaction read a missing segment. That run's pre-compaction cleanup had **already** deleted older generations ([why](/architecture/bricked#_4-cleanup-deletes-by-generation-and-by-default-it-runs-first)) |
+| `oak-run check` output | Per-path lines name the corrupt paths; a stack trace means `check` couldn't finish (see the tree) |
+| A `Segment not found` line ending in a GC tag: `…ms,[pre-compaction cleanup]` or `…ms,gc-count=…` | GC in this JVM deleted a segment that a reader was still holding. Not storage damage: see [Scenario 3](#scenario-3-a-reader-outlived-its-gc-cycle-rare) |
 
 ## Step 1: Stop and Assess
 
 ```bash
-# STOP AEM if running
+# 1. Pause GC: JMX → SegmentRevisionGarbageCollection → PausedCompaction = true
+#    (and cancelRevisionGC if a run is in progress)
+
+# 2. Stop AEM
 ./crx-quickstart/bin/stop
 
-# Check if this is a "bricked" scenario
-java -jar oak-run-*.jar check /path/to/segmentstore
+# 3. Copy the store before anything writes to it
+rsync -a crx-quickstart/repository/segmentstore/ /safe/place/segmentstore-copy/
+
+# 4. Let check decide (it opens the store read-only)
+java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log
 ```
+
+Pausing comes first because every GC run that isn't skipped deletes older generations *before* it compacts, whether or not its compaction then succeeds ([Why Repositories Get Bricked](/architecture/bricked)).
 
 ### Interpreting Check Results
 
-**Scenario A: Check runs, finds good revision** ✅
+**Recoverable** ✅
 ```
 Searched through 247 revisions and 3 checkpoints
-Latest good revision for paths and checkpoints checked is abc123 from 2025-10-03
+...
+Overall
+Latest good revision for paths and checkpoints checked is 28c7e87c-…:261920 from Oct 3, 2025, 10:23:45 AM
 ```
-→ **Recoverable** — Use [Journal Recovery](/recovery/journal) or [Surgical Removal](/recovery/surgical)
+→ Use [Journal Recovery](/recovery/journal) (Path A) or [Surgical Removal](/recovery/surgical) (Path B)
 
-**Scenario B: Check runs, no good revision** ⚠️
+**Checkpoint broken** 🟡
+```
+Head
+Latest good revision for path / is 28c7e87c-…:261920 from Oct 3, 2025, 10:23:45 AM
+
+Checkpoints
+- 59e3b73e-9c3c-45e3-b6d9-156d7a6e5c52
+  Latest good revision for path / is none from unknown time
+
+Overall
+Latest good revision for paths and checkpoints checked is none from unknown time
+```
+→ The content is intact; one checkpoint is not. `check` exits `0` here, so read the lines, not the exit code. Remove that checkpoint on a copy ([how](/architecture/bricked#only-a-checkpoint-is-broken))
+
+**Partially recoverable** ⚠️
 ```
 Searched through 247 revisions and 3 checkpoints
 No good revision found
 ```
-→ **Partially Recoverable** — Restore a backup if you have one, even an old one. Otherwise try [Journal Recovery](/recovery/journal) first (it scans every segment, not just the revisions in `journal.log`), then [Sidegrade](/recovery/sidegrade) to extract what you can
+→ Restore a backup if you have one, even an old one (Path D). Otherwise try [Journal Recovery](/recovery/journal) first (Path A: it scans every segment, not just the revisions in `journal.log`), then [Sidegrade](/recovery/sidegrade) (Path C) to extract what you can
 
-**Scenario C: Check itself fails with SNFE** ❌
+**Bricked** ❌
 ```
 org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
     at org.apache.jackrabbit.oak.segment.file.ReadOnlyFileStore.readSegment(ReadOnlyFileStore.java:...)
 ```
-→ **Unrecoverable** — Restore from backup. No Oak tools can help.
+→ Restore from backup (Path D). No Oak tool can help, unless the trace runs through `SegmentNodeStore.checkpoints` (see above)
 
 ## Step 2: Choose Recovery Path
 
@@ -176,24 +201,28 @@ df -h /path/to/segmentstore
 
 **Recovery**: Free disk space, then [Journal Recovery](/recovery/journal).
 
-### Scenario 3: Long-Lived Sessions + Tail Compaction
+### Scenario 3: A Reader Outlived Its GC Cycle (rare)
 
 **Symptoms**:
-- Intermittent SNFE during workflows or scheduled jobs
-- SNFE correlates with compaction timestamps
-- "Fixes itself" after session refresh
+- The `Segment not found` line carries a GC tag after the age: `SegmentId age=…ms,[pre-compaction cleanup]` or `SegmentId age=…ms,gc-count=…`
+- `oak-run check` finds the store intact
+- Typically inside a long-running job (workflow, bulk import, traversal) that started before the GC run
 
 **Diagnosis**:
 ```bash
-# Check if SNFE correlates with compaction
-grep "running tail compaction" error.log
-grep "SegmentNotFoundException" error.log
-# Compare timestamps
+# Only tagged lines point to this scenario
+grep "Segment not found" error.log | grep -E "pre-compaction cleanup|gc-count="
 ```
 
-**Recovery**: This is a **race condition**, not corruption. See [GC documentation](/architecture/gc#long-lived-sessions-tail-compaction).
+**What happened**: GC deletes by generation, not by what is still being read. A session kept reading an old revision across a GC run and reached a segment that run had just deleted. The tag is Oak's record that it reclaimed that segment in this JVM.
+
+**Recovery**: Not corruption. Refresh or reopen the session and rerun the job. See [GC documentation](/architecture/gc#long-lived-sessions-tail-compaction).
 
 **Prevention**: Fix long-lived sessions in application code, or schedule GC around long jobs. `compaction.retainedGenerations` can't be raised: it is fixed at 2 ([GC](/architecture/gc#long-lived-sessions-tail-compaction)).
+
+::: warning No tag, no race
+Without a GC tag, the segment is missing from storage. An SNFE that shows up only now and then is still corruption: damage stays quiet until something reads the damaged path.
+:::
 
 ### Scenario 4: Compaction Over Corruption
 
@@ -259,7 +288,7 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 2. **Check before anything else** — Determines your recovery options
 3. **Backup is always safest** — If you have one, use it
 4. **Never let GC run on corruption** — Every run deletes older generations before it compacts, whether or not the compaction then succeeds ([why](/architecture/bricked))
-5. **Intermittent SNFE ≠ corruption** — May be GC race condition
+5. **Intermittent SNFE is still corruption** — Unless the log line carries a GC tag ([Scenario 3](#scenario-3-a-reader-outlived-its-gc-cycle-rare))
 6. **"0 missing blobs" can still fail** — See [Checkpoint Advancement](/checkpoints/checkpoint-advancement)
 :::
 

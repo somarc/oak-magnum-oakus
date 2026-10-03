@@ -171,9 +171,9 @@ Full Compaction:
 └─────────────────────────────────┘
 ```
 
-## 🔥 CRITICAL: Long-Lived Sessions + Tail Compaction = SegmentNotFoundException {#long-lived-sessions-tail-compaction}
+## Long-Lived Sessions and GC: SNFE Without Corruption {#long-lived-sessions-tail-compaction}
 
-This is a **race condition**, NOT corruption. Understanding this prevents misdiagnosis. (Full compaction behaves the same way: cleanup reclaims by GC generation, not by session.)
+A reader that keeps an old revision open across a GC run can hit a `SegmentNotFoundException` although nothing is damaged: cleanup reclaims by GC generation, not by what is still being read. This applies to full and tail compaction alike. It is rare, and it has one reliable signature: a GC tag on the log line ([below](#how-to-detect-this-pattern)). Without that tag, treat the SNFE as corruption.
 
 ### The Scenario
 
@@ -216,35 +216,32 @@ Session lifecycle:
 
 ### How to Detect This Pattern
 
+When cleanup reclaims a segment that something in the same JVM still references, Oak tags that segment ID. The `Segment not found` line then carries the tag after the age:
+
+| Tag after `SegmentId age=…ms,` | Written by |
+|--------------------------------|------------|
+| `[pre-compaction cleanup]` | The cleanup at the start of a GC run (Oak's default strategy) |
+| `gc-count=…,gc-status=…,store-generation=…,reclaim-predicate=…` | The cleanup after compaction |
+
 ```bash
-# Look for SNFE in logs with specific pattern
-$ grep -A 5 "SegmentNotFoundException" error.log | grep -B 5 "Segment.*not found"
-
-# If you see:
-# - SNFE during workflow execution
-# - SNFE during scheduled job runs
-# - SNFE correlating with compaction timestamps
-# - SNFE that "fixes itself" after session refresh
-
-# → This is the long-lived session + tail compaction pattern
+# Only tagged lines are this pattern
+grep "Segment not found" error.log | grep -E "pre-compaction cleanup|gc-count="
 ```
+
+No tag means the segment is missing from storage: follow the [SNFE Playbook](/recovery/snfe-playbook).
 
 ### Example Log Pattern
 
 ```
-2025-10-06 02:15:00 *INFO* [...] TarMK GC #12: running tail compaction
-2025-10-06 02:45:00 *INFO* [...] TarMK GC #12: compaction succeeded in …, after 1 cycles
-2025-10-06 02:46:00 *INFO* [...] TarMK GC #12: cleanup marking files for deletion: data00010a.tar,data00011a.tar
-2025-10-06 02:46:05 *INFO* [...] Removed files data00010a.tar,data00011a.tar
-2025-10-06 03:10:00 *ERROR* [DAM Update Asset Workflow] 
-  org.apache.jackrabbit.oak.segment.SegmentNotFoundException: 
-  Segment aaa-bbb-ccc-111 not found
-  at com.day.cq.dam.core.impl.AssetHandler.processAsset()
-  
-→ Workflow started at 01:00 (before compaction)
-→ Compaction deleted Gen0 at 02:46
-→ Workflow tried to read Gen0 segment at 03:10
-→ SNFE because Gen0 was deleted while workflow still active
+02:00:00 *INFO*  [...] TarMK GC #12: pre-compaction cleanup started
+02:00:41 *INFO*  [...] TarMK GC #12: cleanup marking files for deletion: data00010a.tar,data00011a.tar
+02:45:10 *INFO*  [...] TarMK GC #12: compaction succeeded in …
+03:10:00 *ERROR* [workflow job thread] org.apache.jackrabbit.oak.segment.SegmentNotFoundExceptionListener
+  Segment not found: 4f2a9c1e-7b3d-4e8a-9c2f-1a2b3c4d5e6f. SegmentId age=7800000ms,[pre-compaction cleanup]
+
+→ The job had been reading the same old revision since before 02:00
+→ The cleanup at 02:00 deleted that revision's segments
+→ At 03:10 the job reached one of them: SNFE, tagged by the cleanup that removed it
 ```
 
 ### Solutions
@@ -310,12 +307,12 @@ Then:
 
 ### Key Takeaways
 
-- 💡 Tail compaction assumes **short-lived sessions** (minutes, not hours)
-- 💡 Long-lived sessions + tail compaction = **SegmentNotFoundException risk**
-- 💡 This is **NOT corruption** - it's a race condition between session lifecycle and GC
+- 💡 GC assumes **short-lived sessions**: cleanup reclaims by generation, full or tail
+- 💡 A session reading one old revision across a GC run risks a **SegmentNotFoundException**
+- 💡 This is **NOT corruption**, but only when the SNFE line carries a GC tag
 - 💡 Retention can't be increased on TarMK (`compaction.retainedGenerations` is fixed at 2) - **scheduling GC around long jobs** is the safest mitigation
 - 💡 Fixing application code to refresh/reopen sessions is the **best long-term solution**
-- 💡 This pattern is **hard to diagnose** because it's intermittent (only happens when timing aligns)
+- 💡 It is **easy to confirm**: the GC tag on the `Segment not found` line. No tag means the segment is missing from storage
 
 ## Why GC is Risky During Corruption
 
