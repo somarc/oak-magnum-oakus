@@ -24,7 +24,7 @@ org.apache.jackrabbit.oak.segment.SegmentNotFoundException:
    ```
 
 2. **If good revision found** → `recover-journal`
-3. **If no good revision** → Sidegrade or restore backup
+3. **If no good revision** → Restore a backup if you have one; otherwise `recover-journal`, check again, then sidegrade
 4. **If check fails** → Restore from backup
 
 ---

@@ -46,7 +46,7 @@ incident:
         link: "/crisis/#✅-step-2-identify-your-repository-type"
       - title: Run the diagnostic
         body: "Stop AEM. Use the oak-run release that matches your oak-core, and save the output."
-        command: "java -jar oak-run-*.jar check /path/to/segmentstore"
+        command: "java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log"
         link: "/crisis/#✅-step-3-run-diagnostic-command"
         outcomes:
           - tone: good
@@ -62,7 +62,7 @@ incident:
         body: "<code>recover-journal</code>: simpler, loses recent changes. Surgical removal: preserves more data, slower, and needs fork-only console commands (<code>:count-nodes</code>, <code>:remove-nodes</code>, <code>:remove-node</code>)."
         link: "/crisis/#✅-step-4-choose-recovery-path"
       - title: Last resort
-        body: "No good revision: sidegrade into a new repository with <code>oak-upgrade</code>, excluding the paths check flagged. It stops at the first unreadable node. <strong>This will lose data.</strong> If it fails, restore from backup, even an old one."
+        body: "No good revision. Reconsider any backup, even an old one. Otherwise rebuild the journal with <code>recover-journal</code> and check again; still no good revision? Sidegrade with <code>oak-upgrade</code>, excluding the paths check flagged. <strong>This will lose data.</strong>"
         link: "/crisis/#✅-step-5-last-resort-no-good-revision"
     never:
       text: "run <code>compact</code> before <code>check</code>, when <code>check</code> shows any errors, or while you suspect corruption."
@@ -88,8 +88,8 @@ incident:
         link: "/reference/troubleshooting#repository-won-t-start"
       - signal: Disk 100% full
         cause: "Free space first: a full disk can stop the repository opening. Don't compact to make room; compaction itself needs 2× the store size."
-        dest: oak-run check
-        link: /recovery/check
+        dest: "Crisis checklist, box 3"
+        link: "/crisis/#✅-step-3-run-diagnostic-command"
       - signal: "DataStoreException: Record does not exist"
         log: true
         cause: A blob is missing from the DataStore.

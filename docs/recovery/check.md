@@ -124,7 +124,6 @@ No good revision found  # ← Check completed, but everything is corrupted (exit
 - ✅ Check command successfully opened the FileStore
 - ✅ Tar files are readable
 - ✅ Segments can be accessed
-- ✅ **Repository structure is intact**
 - ❌ Every revision in journal.log has corruption
 
 **Recovery options (STILL POSSIBLE):**
@@ -132,7 +131,7 @@ No good revision found  # ← Check completed, but everything is corrupted (exit
 2. ✅ **`oak-run recover-journal`** - Scans ALL segments in tar files to find valid roots
 3. ✅ **`oak-upgrade` (sidegrade)** - Extracts accessible content
 
-**Prognosis**: ⚠️ **RECOVERABLE** - But restoration from backup is faster, safer, and more reliable.
+**Prognosis**: ⚠️ **PARTIALLY RECOVERABLE** - Restoration from backup is faster, safer, and more reliable. Without one, try `recover-journal` first, then the sidegrade.
 
 ### Scenario B: Check CAN'T EVEN RUN (Fatal)
 

@@ -15,10 +15,12 @@ Follow the boxes in order. Check them off as you go. **DO NOT SKIP BOXES.**
 | Signal | Likely Cause | Jump To |
 |--------|--------------|---------|
 | `SegmentNotFoundException: Segment xyz not found` | Segment corruption or missing TAR | [Step 3](#✅-step-3-run-diagnostic-command) |
-| `TarMK refuses to start` / `Unable to access revision …, rewinding...` | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
-| `IllegalStateException: … is in use by another store.` | Store already open in the same JVM (`repo.lock` held) | [Repository Won't Start](/reference/troubleshooting#repository-won-t-start) |
+| TarMK refuses to start | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `Unable to access revision …, rewinding...` (WARN) | Journal entries point at missing segments; Oak falls back to an older revision, so recent changes look lost | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `IllegalStateException: … is in use by another store.`, or startup hangs | Store already open in the same JVM, or another process holds `repo.lock` (find it with `lsof`; don't delete the lock) | [Repository Won't Start](/reference/troubleshooting#repository-won-t-start) |
 | `OutOfMemoryError` during startup | Heap too small for repo size | Not corruption — increase heap |
-| Disk 100% full | Checkpoint bloat or GC not running | [Checkpoints](/checkpoints/) |
+| Disk 100% full | Free space first: a full disk can stop the repository opening. Don't compact to make room; compaction itself needs 2× the store size | [Step 3](#✅-step-3-run-diagnostic-command) |
+| Disk keeps growing; compaction doesn't reclaim space | Orphaned checkpoints pinning old segments | [Checkpoint Disk Bloat](/checkpoints/disk-bloat) |
 | `DataStoreException: Record does not exist` | Missing blob in DataStore | [DataStore Consistency](/datastore/consistency) |
 
 ::: warning ⏱️ TIME WARNING
@@ -103,8 +105,14 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 
 **FOR SEGMENTSTORE (most common):**
 
+```
+[ ] AEM is stopped (crx-quickstart/bin/stop)
+[ ] oak-run release matches your oak-core (see the scope box at the top)
+[ ] Output is saved to a file - the paths it flags matter later
+```
+
 ```bash
-java -jar oak-run-*.jar check /path/to/segmentstore
+java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log
 ```
 
 **Check the output:**
@@ -119,6 +127,7 @@ java -jar oak-run-*.jar check /path/to/segmentstore
     → Jump to Step 5 (Last Resort)
 
 [ ] Command FAILS with "SegmentNotFoundException" or "IOException"
+    (a stack trace instead of a result - check could not open the store)
     → VERY BAD! Repository is bricked.
     → Restore from backup. No other option.
 ```
@@ -202,6 +211,36 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 ## ✅ Step 5: Last Resort (No Good Revision)
 
 **This will lose data. Accept that now.**
+
+```
+[ ] You have a backup, even an old one?
+    → Reconsider it now. Restoring is faster, safer and more predictable
+      than anything below.
+```
+
+### 5a. Rebuild the journal
+
+`check` only tests the revisions listed in `journal.log`. `recover-journal` scans every segment for root records and makes the newest one that validates the new head, so it can find a good revision that `check` never tried. It needs the head and every checkpoint to validate, like `check`, so it often finds nothing newer, and it reads the whole store (2 TB ≈ 24–48 hours). The old journal is kept as `journal.log.bak.NNN`. AEM stays stopped: `recover-journal` takes no lock.
+
+```bash
+java -jar oak-run-*.jar recover-journal /path/to/segmentstore
+java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check2.log
+```
+
+```
+[ ] "Journal recovered" and check now finds a good revision
+    → Note the revision's date: everything after it is lost
+    → Acceptable? Start AEM
+    → Too far back? Restore journal.log.bak.NNN as journal.log
+      and try 5b: a sidegrade of the newer head may keep more
+
+[ ] Any "…, aborting" message, or check still finds no good revision
+    → Continue to 5b
+    ("Too many journal backups, please cleanup" is different: move the old
+     journal.log.bak.* files out of segmentstore/ and run it again)
+```
+
+### 5b. Sidegrade what can be read
 
 ```bash
 # oak-upgrade release matching your oak-core; paths are repository dirs (each containing segmentstore/)

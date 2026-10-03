@@ -30,7 +30,7 @@ flowchart TD
     B -->|During operation| D{Consistent or<br/>intermittent?}
     
     C -->|Yes, finds<br/>good rev| F[Journal<br/>Recovery]
-    C -->|Yes, no<br/>good rev| G[Sidegrade]
+    C -->|Yes, no<br/>good rev| G[Journal<br/>Recovery,<br/>then<br/>Sidegrade]
     C -->|No, check<br/>fails| H[Restore from<br/>Backup]
     
     D -->|Consistent<br/>path| I[Surgical<br/>Removal]
@@ -74,7 +74,7 @@ Latest good revision for paths and checkpoints checked is abc123 from 2025-10-03
 Searched through 247 revisions and 3 checkpoints
 No good revision found
 ```
-→ **Partially Recoverable** — Use [Sidegrade](/recovery/sidegrade) to extract what you can
+→ **Partially Recoverable** — Restore a backup if you have one, even an old one. Otherwise try [Journal Recovery](/recovery/journal) first (it scans every segment, not just the revisions in `journal.log`), then [Sidegrade](/recovery/sidegrade) to extract what you can
 
 **Scenario C: Check itself fails with SNFE** ❌
 ```
@@ -87,7 +87,7 @@ org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 0a1b2c3d-4e5
 
 ### Path A: Journal Recovery (Fastest)
 
-**When to use**: Check found a good revision, you can accept losing recent changes.
+**When to use**: Check found a good revision, you can accept losing recent changes. Also the first thing to try when check finds no good revision and you have no backup: it scans root records the journal doesn't list.
 
 ```bash
 java -jar oak-run-*.jar recover-journal /path/to/segmentstore
@@ -129,7 +129,7 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 
 ### Path C: Sidegrade (Last Resort)
 
-**When to use**: No good revision found, but check can still run.
+**When to use**: No good revision found, and `recover-journal` aborted or check still finds none after it, but check can still run.
 
 ```bash
 # positional args = repository dirs that contain segmentstore/

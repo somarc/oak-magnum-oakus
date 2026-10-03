@@ -31,20 +31,20 @@ flowchart TD
     RECOVERY_PATH -->|Simpler, some<br/>data loss| RECOVER_JOURNAL[recover-journal]
     RECOVERY_PATH -->|Surgical,<br/>preserve more| SURGICAL[count-nodes +<br/>remove-nodes]
     
-    NO_REV --> LAST_RESORT{Last resort<br/>options}
+    NO_REV --> LAST_RESORT{Any backup,<br/>even old?}
     
-    LAST_RESORT -->|Try journal<br/>rebuild| RECOVER_JOURNAL
-    LAST_RESORT -->|Extract what's<br/>accessible| SIDEGRADE[oak-upgrade<br/>sidegrade]
+    LAST_RESORT -->|Yes| RESTORE_OLD[✅ Restore it]
+    LAST_RESORT -->|No: rebuild<br/>journal first| RECOVER_JOURNAL
     
     BRICKED --> MUST_RESTORE[Must restore from backup<br/>No other option]
     
     RECOVER_JOURNAL --> VERIFY[Run check again]
     SURGICAL --> VERIFY
-    SIDEGRADE --> NEW_REPO[New repository<br/>created]
+    SIDEGRADE[oak-upgrade<br/>sidegrade] --> NEW_REPO[New repository<br/>created]
     
     VERIFY --> VERIFY_RESULT{Verification?}
     VERIFY_RESULT -->|Success| DONE[✅ Start AEM]
-    VERIFY_RESULT -->|Still errors| LAST_RESORT
+    VERIFY_RESULT -->|Still errors| SIDEGRADE
 ```
 
 ## Decision Points Explained
@@ -84,8 +84,9 @@ flowchart TD
 - Choose between fast rollback or surgical removal
 
 **No good revision**:
-- Severe corruption
-- Try journal recovery or sidegrade
+- Severe corruption, partially recoverable at best
+- Reconsider any backup, even an old one
+- Otherwise run `recover-journal` and check again; if it aborts or check still finds none, sidegrade
 
 **Check fails to run**:
 - Critical segments missing

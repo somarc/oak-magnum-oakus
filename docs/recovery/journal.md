@@ -85,8 +85,8 @@ It **can only** rebuild the journal from **existing** segments.
 
 If `recover-journal` doesn't find any valid revisions (`No valid journal entries found, aborting`):
 
-1. **Try sidegrade** - Extract accessible content to new repo
-2. **Restore from backup** - If available
+1. **Restore from backup** - If available, even an old one
+2. **Try sidegrade** - Extract accessible content to new repo
 3. **Contact support** - For AEM customers
 
 ## Manual Journal Truncation ("Riverboat Gambler" Approach)
