@@ -161,18 +161,23 @@ $ java -jar oak-run-*.jar compact --tail /path/to/segmentstore
 
 ```mermaid
 flowchart TD
-    A[Corrupted Segment] --> B[Compaction Runs]
-    B --> C{Reachable from head/checkpoints?}
-    C -->|yes| D[SNFE: run aborted, nothing fixed]
-    C -->|no, only old revisions| E[Succeeds: cleanup deletes old generations]
-    E --> F[Rollback points permanently lost]
+    A[Corrupted segment] --> P[Online GC run: pre-compaction<br/>cleanup deletes older generations]
+    P --> B[Compaction runs]
+    B --> C{Does it read<br/>the damage?}
+    C -->|yes| D[SNFE: run aborted,<br/>nothing fixed]
+    C -->|no| E[Succeeds: older generations<br/>deleted next]
+    D --> F[Older rollback points<br/>are gone]
+    E --> F
 ```
 
 If corruption exists:
-1. Compaction reads every node of head and every checkpoint (not external DataStore binaries)
-2. If it hits a missing segment, the run is **aborted** (`compaction encountered an error`); the old TAR files stay (online cleanup removes only the half-written new generation; offline `compact` skips cleanup)
-3. If the damage is only in older revisions, compaction **succeeds** and cleanup deletes the older generations
-4. **Those older revisions are now GONE** - you can no longer roll back to them
+1. **Online** (Oak's default strategy), the GC run first deletes older generations: the pre-compaction cleanup. Under full GC that is everything from before the last successful compaction
+2. Compaction reads every node of head and every checkpoint (not external DataStore binaries); tail compaction reads only what changed since the last compaction
+3. If it hits a missing segment, the run is **aborted** (`compaction encountered an error`). Online, the cleanup after it removes only the half-written generation (Oak 1.22) or nothing (Oak 2.4), but step 1 already ran. Offline `compact` has no pre-compaction cleanup: it exits 1, and head, journal and older generations stay as they were
+4. If it doesn't read the damage, compaction **succeeds** and the older generations are deleted (offline: immediately, keeping one generation, with `journal.log` truncated)
+5. **Those older revisions are now GONE** - you can no longer roll back to them
+
+The full mechanism, with a day-by-day timeline: [Why Repositories Get Bricked](/architecture/bricked).
 
 ### The "Timeline of Death"
 
@@ -190,14 +195,17 @@ Compaction Attempts to Read:
    - /content/bad → ERROR! (needs segmentX, which is missing)
 3. SegmentNotFoundException propagates:
    "TarMK GC #N: compaction encountered an error"
-4. Run aborted - no new head; data00005a.tar is kept
-   (online: cleanup reclaims only the half-written new generation;
-    offline: "Compaction cancelled after …", exit 1, no cleanup,
-    journal.log untouched)
+4. Run aborted - no new head
+   (offline: "Compaction cancelled after …", exit 1, no cleanup,
+    journal.log untouched;
+    online, full GC: this run's pre-compaction cleanup had ALREADY
+    deleted everything from before the last successful compaction)
 
 Result:
 - /content/bad still broken (compaction fixes nothing)
-- rev2 still reachable - journal rollback still works
+- Offline: rev2 still reachable - journal rollback still works
+- Online (full GC): rev2 survives only if it is newer than the last
+  successful compaction; otherwise the pre-compaction cleanup deleted it
 - Online GC will fail the same way on every run
 
 The dangerous variant: once the head is repaired or rolled back so that
@@ -319,7 +327,7 @@ Look for:
 
 | Failure | Cause | Recovery |
 |---------|-------|----------|
-| **Compaction cancelled / failed** | Out of disk space or memory, cancelled, or SNFE | Safe - old tars still intact |
+| **Compaction cancelled / failed** | Out of disk space or memory, cancelled, or SNFE | Offline: head, journal and older generations unchanged. Online: the run's pre-compaction cleanup had already deleted older generations |
 | **Cleanup failed** | I/O error, permissions | Partial - new tars created but old not removed |
 | **Journal truncate failed** | File system error | Dangerous - may need manual journal recovery |
 | **Compacted after corruption was masked** | Damage only in old revisions, or head "fixed" first | **Catastrophic** for rollback - old generations deleted; restore from backup |
@@ -328,7 +336,7 @@ Look for:
 
 ::: tip Remember
 1. **Check before compact** - Always verify health first
-2. **Never compact corruption** - It aborts on SNFE, and a later successful run deletes your rollback points
+2. **Never let GC run on corruption** - Each online run deletes older generations first, then aborts on SNFE; a successful run deletes the rest. See [Why Repositories Get Bricked](/architecture/bricked)
 3. **Need 2x disk space** - Plan for temporary growth
 4. **Offline truncates journal** - Lose rollback capability
 5. **Online preserves journal** - Prefer for production

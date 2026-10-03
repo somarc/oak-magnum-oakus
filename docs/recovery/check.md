@@ -109,6 +109,10 @@ Revisions are journal record IDs (`<segment-uuid>:<offset>`); the timestamp form
 
 **Not all "bricked" scenarios are equal.** Your recovery options depend entirely on whether the repository can even be opened.
 
+::: info Why repositories end up here
+How unaddressed corruption and normal GC delete the last intact copies, why no Oak tool can rebuild a lost segment, and how long you have to act: **[Why Repositories Get Bricked](/architecture/bricked)**.
+:::
+
 ### Scenario A: Check RUNS but finds "No good revision found"
 
 ```bash
@@ -125,6 +129,8 @@ No good revision found  # ← Check completed, but everything is corrupted (exit
 - ✅ Tar files are readable
 - ✅ Segments can be accessed
 - ❌ Every revision in journal.log has corruption
+
+A related case looks better than it is: the Overall line reads `Latest good revision for paths and checkpoints checked is none from unknown time` and `check` exits `0`. Head and checkpoints were never all good at the same revision. Read the Head and Checkpoints lines: if the head shows a revision and only a checkpoint shows `none`, see [Only a checkpoint is broken](/architecture/bricked#only-a-checkpoint-is-broken); if the head shows `none` too, this is Scenario A.
 
 **Recovery options (STILL POSSIBLE):**
 1. ✅ **Restore from backup** - BEST option if you have a recent, tested backup
@@ -166,6 +172,10 @@ java.io.IOException: Failed to open tar file data00005a.tar.ro.bak
 - ❌ **NO** `oak-upgrade` (can't initialize source repository)
 - ❌ **NO** magical Oak tools (everything needs FileStore to open)
 - ✅ **ONLY** restore from backup
+
+::: tip One exception: a broken checkpoint list
+With the default `--checkpoints all`, `check` lists the head's checkpoints before it starts. If that listing reads a missing segment, the stack trace runs through `SegmentNodeStore.checkpoints` and the store itself did open. `check --head` skips the listing and can still test the head.
+:::
 
 **Prognosis**: ❌ **UNRECOVERABLE** - Repository is truly bricked. Restore from backup immediately.
 

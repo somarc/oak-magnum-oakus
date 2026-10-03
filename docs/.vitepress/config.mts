@@ -56,6 +56,7 @@ export default defineConfig({
               { text: 'TAR Files', link: '/architecture/tar-files' },
               { text: 'Journal', link: '/architecture/journal' },
               { text: 'Generational GC', link: '/architecture/gc' },
+              { text: 'Why Repos Get Bricked', link: '/architecture/bricked' },
             ]
           },
           {

@@ -193,25 +193,26 @@ grep "SegmentNotFoundException" error.log
 
 **Recovery**: This is a **race condition**, not corruption. See [GC documentation](/architecture/gc#long-lived-sessions-tail-compaction).
 
-**Prevention**: Increase `compaction.retainedGenerations` (default `2`, PID `org.apache.jackrabbit.oak.segment.SegmentNodeStoreService`) or fix long-lived sessions in application code.
+**Prevention**: Fix long-lived sessions in application code, or schedule GC around long jobs. `compaction.retainedGenerations` can't be raised: it is fixed at 2 ([GC](/architecture/gc#long-lived-sessions-tail-compaction)).
 
 ### Scenario 4: Compaction Over Corruption
 
 **Symptoms**:
-- SNFE after compaction ran
-- `oak-run check` now fails completely
-- Journal.log has only one entry
+- SNFE first seen days or weeks ago, while online GC kept running
+- `compaction encountered an error` in recent GC runs, or tail runs succeeding while a full run fails
+- `oak-run check` finds no good revision, or `journal.log` has only one entry after an offline `compact`
 
 **Diagnosis**:
 ```bash
-# Check journal.log size
+# When did GC delete generations, and did compaction succeed?
+grep -E "pre-compaction cleanup|compaction encountered an error|compaction succeeded" error.log
+# Offline compact truncates journal.log to a single line
 wc -l /path/to/segmentstore/journal.log
-# If only 1 line, compaction truncated it
 ```
 
-**Recovery**: **Restore from backup**. Compaction deleted the segments you need.
+**Recovery**: **Restore from backup**, or [crisis Step 5](/crisis/#✅-step-5-last-resort-no-good-revision). GC deleted the generations that held the intact copies.
 
-**Prevention**: ALWAYS run `oak-run check` before compaction.
+**Prevention**: On the first SNFE, pause compaction, stop AEM and copy the store. Each online GC run deletes older generations *before* it compacts, so a failing compaction doesn't protect them. See [Why Repositories Get Bricked](/architecture/bricked).
 
 ### Scenario 5: Invisible Missing Blobs (Indexing Death Loop)
 
@@ -257,7 +258,7 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 1. **SNFE is a symptom, not a diagnosis** — Find the root cause
 2. **Check before anything else** — Determines your recovery options
 3. **Backup is always safest** — If you have one, use it
-4. **Never compact corruption** — It fixes nothing, and a successful run deletes the older revisions you could roll back to
+4. **Never let GC run on corruption** — Every run deletes older generations before it compacts, whether or not the compaction then succeeds ([why](/architecture/bricked))
 5. **Intermittent SNFE ≠ corruption** — May be GC race condition
 6. **"0 missing blobs" can still fail** — See [Checkpoint Advancement](/checkpoints/checkpoint-advancement)
 :::

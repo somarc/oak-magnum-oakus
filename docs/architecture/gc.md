@@ -43,6 +43,10 @@ graph LR
    - Garbage is simply never copied
    - Concurrent commits: up to `compaction.retryCount` (5) catch-up cycles, then force-compact while blocking writes for up to `compaction.force.timeout` (60 s); cancelled if free heap drops below `compaction.memoryThreshold` (15%)
 
+::: warning Default strategy: cleanup runs first
+Unless the JVM runs with `-Dgc.classic=true`, a run that gets past estimation starts the compaction phase with a **pre-compaction cleanup** (`pre-compaction cleanup started`). It deletes older generations before anything is read (under full GC, everything from before the last successful compaction), and a failed compaction doesn't undo it. See [Why Repositories Get Bricked](/architecture/bricked#_4-cleanup-deletes-by-generation-and-by-default-it-runs-first).
+:::
+
 3. **Cleanup Phase**
    - Mark segments of old generations as reclaimable
    - Rewrite TAR files with more than 25% reclaimable as the next letter; drop TAR files with nothing left
@@ -315,27 +319,28 @@ Then:
 
 ## Why GC is Risky During Corruption
 
-::: danger ⚠️ NEVER Run Compaction on Corrupted Repository
-If corruption exists **before** compaction runs:
-1. Compaction reads head and every checkpoint
-2. If it hits a missing segment, the run **aborts** and fixes nothing (only the half-written new generation is reclaimed)
-3. If the damage is only in older revisions, compaction **succeeds** and cleanup **permanently deletes** the older generations
-4. **Result**: the good revisions you could have rolled back to with `recover-journal` are gone
+::: danger ⚠️ NEVER Let GC Run on a Corrupted Repository
+If corruption exists **before** a GC run:
+1. The run starts with the **pre-compaction cleanup**: older generations are deleted before anything is read (under full GC, everything from before the last successful compaction)
+2. Compaction then reads head and every checkpoint (tail compaction: only what changed since the last compaction)
+3. If it hits a missing segment, the run **aborts**, but the deletion in step 1 has already happened
+4. If it doesn't read the damage (older revisions only, or the unchanged base under tail compaction), it **succeeds**, and the next run deletes the generations before it
+5. **Result**: either way, the revisions from before the last successful compaction, which you could have rolled back to with `recover-journal`, are gone
 
-See [Compaction and Corruption](/recovery/compaction#compaction-and-corruption).
+See [Why Repositories Get Bricked](/architecture/bricked) and [Compaction and Corruption](/recovery/compaction#compaction-and-corruption).
 :::
 
-| Scenario | Tail Compaction Risk | Full Compaction Risk |
-|----------|---------------------|---------------------|
-| Corruption in recent data | ❌ HIGH | ❌ CRITICAL |
-| Corruption in old data | ✅ LOW | ❌ CRITICAL |
-| Unknown corruption location | ⚠️ MEDIUM | ❌ CRITICAL |
+| Where the damage is | Tail compaction | Full compaction |
+|---------------------|-----------------|-----------------|
+| Recent writes (changed since the last compaction) | ❌ Aborts, after its pre-compaction cleanup already ran | ❌ Same |
+| Unchanged base | ❌ Succeeds without reading it: the damage stays hidden | ⚠️ Aborts; often the only signal you get |
+| Older revisions only | ❌ Succeeds; cleanup deletes those revisions | ❌ Same |
 
 **Operator Guidance:**
-- 🔴 If corruption suspected: Disable BOTH tail and full compaction
+- 🔴 If corruption suspected: pause GC in JMX (`SegmentRevisionGarbageCollection` → `PausedCompaction=true`, plus `cancelRevisionGC` for a running run). A paused run is skipped entirely, including the pre-compaction cleanup. Changing the OSGi `pauseCompaction` property instead reopens the segment store
 - 🔴 Never run full compaction without `oak-run check` first
-- ⚠️ Tail compaction is safer but can still hit recent corruption
-- ✅ After recovery: Re-enable tail first, test for weeks before full
+- ⚠️ A successful tail compaction proves nothing about the base; only a full compaction reads it
+- ✅ After recovery: a successful full compaction is the evidence that head and checkpoints are readable again
 
 ## When Deleted Content Gets Reclaimed
 

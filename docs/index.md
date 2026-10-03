@@ -50,11 +50,14 @@ incident:
         link: "/crisis/#✅-step-3-run-diagnostic-command"
         outcomes:
           - tone: good
-            signal: "Latest good revision for paths and checkpoints checked is…"
+            signal: "Latest good revision for paths and checkpoints checked is <revision>…"
             action: Recoverable. Go to box 4.
           - tone: warn
             signal: "No good revision found"
             action: Severely corrupted. Go to box 5.
+          - tone: warn
+            signal: "… checked is none from unknown time"
+            action: Not good, even with exit code 0. Read the Head line first.
           - tone: bad
             signal: "Fails with SegmentNotFoundException or IOException"
             action: Bricked. Restore from backup. No other option.
@@ -65,8 +68,8 @@ incident:
         body: "No good revision. Reconsider any backup, even an old one. Otherwise rebuild the journal with <code>recover-journal</code> and check again; still no good revision? Sidegrade with <code>oak-upgrade</code>, excluding the paths check flagged. <strong>This will lose data.</strong>"
         link: "/crisis/#✅-step-5-last-resort-no-good-revision"
     never:
-      text: "run <code>compact</code> before <code>check</code>, when <code>check</code> shows any errors, or while you suspect corruption."
-      more: All six never-dos
+      text: "let online GC or <code>compact</code> run before <code>check</code>, when <code>check</code> shows any errors, or while you suspect corruption."
+      more: All seven never-dos
       link: "/crisis/#🚫-never-do-these"
   symptoms:
     title: What are you seeing?

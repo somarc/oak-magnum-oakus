@@ -118,7 +118,8 @@ java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log
 **Check the output:**
 
 ```
-[ ] Output says: "Latest good revision for paths and checkpoints checked is..."
+[ ] Output says: "Latest good revision for paths and checkpoints checked is
+    <revision> from <date>"
     → GOOD! Repository is recoverable.
     → Continue to Step 4
 
@@ -126,11 +127,21 @@ java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log
     → BAD! Repository is severely corrupted.
     → Jump to Step 5 (Last Resort)
 
+[ ] Output says: "... checked is none from unknown time" (exit code 0!)
+    → Not a good result. Read the Head and Checkpoints lines above it
+    → Head shows a revision, only a checkpoint shows none?
+      Content is intact: see "Only a checkpoint is broken" (link below)
+    → Head shows none too? Jump to Step 5 (Last Resort)
+
 [ ] Command FAILS with "SegmentNotFoundException" or "IOException"
     (a stack trace instead of a result - check could not open the store)
-    → VERY BAD! Repository is bricked.
+    → Trace runs through SegmentNodeStore.checkpoints? The store did open:
+      run check --head first
+    → Otherwise VERY BAD! Repository is bricked.
     → Restore from backup. No other option.
 ```
+
+Only a checkpoint is broken, or wondering how it got this bad? See [Why Repositories Get Bricked](/architecture/bricked#only-a-checkpoint-is-broken).
 
 ---
 
@@ -274,6 +285,7 @@ The sidegrade stops at the first unreadable node, so leave known-corrupt paths o
 | Skip the "dry-run" before remove-nodes | You might delete critical data |
 | Use recover-journal on DocumentNodeStore | Wrong command for wrong repo type |
 | Panic and run random commands | You will make it worse |
+| Let online GC run after a `SegmentNotFoundException` | Each run deletes older generations *before* it compacts; a failed compaction doesn't bring them back ([why](/architecture/bricked)) |
 
 ---
 
