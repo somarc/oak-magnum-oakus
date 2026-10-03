@@ -157,7 +157,7 @@ function initSegmentStructure() {
   addNode('segment', 'SEGMENT', 100, 200, { label: 'Segment', description: 'Up to 256KB immutable block', radius: 40 })
   addNode('uuid', 'NODE_RECORD', 250, 80, { label: 'UUID', description: 'Unique segment identifier' })
   addNode('nodes', 'NODE_RECORD', 250, 160, { label: 'Node Records', description: 'JCR node structure' })
-  addNode('props', 'NODE_RECORD', 250, 240, { label: 'Properties', description: 'Node property values' })
+  addNode('props', 'NODE_RECORD', 250, 240, { label: 'Value Records', description: 'Property values' })
   addNode('blobs', 'BLOB_REF', 250, 320, { label: 'Blob Refs', description: 'External binary references' })
   
   // References to other segments
@@ -183,31 +183,30 @@ function initTarLifecycle() {
   edges.value = []
   
   // Initial state
-  addNode('gen_a1', 'TAR_FILE', 80, 100, { label: 'data00000a.tar', description: 'Generation A - oldest' })
-  addNode('gen_a2', 'TAR_FILE', 80, 200, { label: 'data00001a.tar', description: 'Generation A' })
-  addNode('gen_a3', 'TAR_FILE', 80, 300, { label: 'data00002a.tar', description: 'Generation A - newest' })
+  addNode('gen_a1', 'TAR_FILE', 80, 100, { label: 'data00000a.tar', description: 'Only old-generation data' })
+  addNode('gen_a2', 'TAR_FILE', 80, 200, { label: 'data00001a.tar', description: 'Partly reclaimable' })
+  addNode('gen_a3', 'TAR_FILE', 80, 300, { label: 'data00002a.tar', description: 'Mostly live: kept as is' })
   
   // Compaction
-  addNode('compact', 'COMPACTION', 280, 200, { label: 'Compaction', description: 'Copy live segments to new gen' })
+  addNode('compact', 'COMPACTION', 280, 200, { label: 'Compaction', description: 'Rewrite HEAD + checkpoints' })
   
   // New generation
-  addNode('gen_b1', 'TAR_FILE', 480, 150, { label: 'data00000b.tar', description: 'Generation B - compacted' })
-  addNode('gen_b2', 'TAR_FILE', 480, 250, { label: 'data00001b.tar', description: 'Generation B - compacted' })
+  addNode('gen_b1', 'TAR_FILE', 480, 100, { label: 'data00003a.tar', description: 'New generation in a new file' })
+  addNode('gen_b2', 'TAR_FILE', 680, 230, { label: 'data00001b.tar', description: 'Rewritten: >25% reclaimable' })
   
   // Cleanup
-  addNode('cleanup', 'REAPER', 680, 200, { label: 'Cleanup', description: 'Delete old generation' })
+  addNode('cleanup', 'REAPER', 480, 300, { label: 'Cleanup', description: 'Per TAR: remove, rewrite or keep' })
   
-  // Backup files
-  addNode('bak', 'BACKUP', 680, 350, { label: '*.tar.bak', description: 'Backup before deletion' })
+  // Removed files
+  addNode('bak', 'GARBAGE', 680, 360, { label: 'Removed', description: 'data00000a.tar: nothing left' })
   
   addEdge('gen_a1', 'compact', 'DATA', { label: 'read' })
   addEdge('gen_a2', 'compact', 'DATA')
   addEdge('gen_a3', 'compact', 'DATA')
   addEdge('compact', 'gen_b1', 'COPY', { label: 'write' })
-  addEdge('compact', 'gen_b2', 'COPY')
-  addEdge('gen_b1', 'cleanup', 'CONTROL', { label: 'verify' })
-  addEdge('gen_b2', 'cleanup', 'CONTROL')
-  addEdge('cleanup', 'bak', 'DATA', { label: 'rename' })
+  addEdge('compact', 'cleanup', 'CONTROL', { label: 'then' })
+  addEdge('cleanup', 'gen_b2', 'COPY', { label: 'rewrite' })
+  addEdge('cleanup', 'bak', 'DELETE', { label: 'remove' })
 }
 
 function initGCCycle() {
@@ -218,20 +217,20 @@ function initGCCycle() {
   addNode('journal', 'JOURNAL', 70, 220, { label: 'Journal Head', description: 'Current repository state' })
   
   // Estimation phase
-  addNode('estimate', 'COMPACTION', 220, 120, { label: 'Estimation', description: 'Calculate garbage amount' })
-  addNode('threshold', 'DECISION', 220, 320, { label: 'Threshold?', description: 'Is garbage > 25%?' })
+  addNode('estimate', 'COMPACTION', 220, 120, { label: 'Estimation', description: 'Growth since last GC' })
+  addNode('threshold', 'DECISION', 220, 320, { label: 'Threshold?', description: 'Grew ≥ sizeDeltaEstimation (1 GiB)?' })
   
   // Compaction phase
-  addNode('traverse', 'ROOT', 400, 120, { label: 'Tree Traversal', description: 'Walk from root' })
-  addNode('mark', 'LIVE', 400, 220, { label: 'Mark Live', description: 'Mark reachable segments' })
-  addNode('copy', 'COMPACTION', 400, 320, { label: 'Copy Live', description: 'Write to new generation' })
+  addNode('traverse', 'ROOT', 400, 120, { label: 'Tree Traversal', description: 'HEAD + every checkpoint' })
+  addNode('mark', 'LIVE', 400, 220, { label: 'Reachable Records', description: 'Only what HEAD/checkpoints use' })
+  addNode('copy', 'COMPACTION', 400, 320, { label: 'Rewrite', description: 'Into new-generation segments' })
   
   // Cleanup phase
   addNode('new_gen', 'GENERATION', 580, 170, { label: 'New Generation', description: 'Compacted segments' })
-  addNode('old_gen', 'GARBAGE', 580, 270, { label: 'Old Generation', description: 'To be deleted' })
+  addNode('old_gen', 'GARBAGE', 580, 270, { label: 'Old Generations', description: 'Never copied; 2 generations retained' })
   
   // Final
-  addNode('cleanup', 'REAPER', 750, 220, { label: 'Cleanup', description: 'Delete old TAR files' })
+  addNode('cleanup', 'REAPER', 750, 220, { label: 'Cleanup', description: 'Reclaim old generations' })
   addNode('done', 'SUCCESS', 880, 220, { label: 'Complete', description: 'Space reclaimed' })
   
   addEdge('journal', 'estimate', 'DATA', { label: 'analyze' })
@@ -301,9 +300,9 @@ function initCheckpointPin() {
   addNode('seg_orphan', 'GARBAGE', 520, 400, { label: 'Orphan Segs', description: 'Orphan CPs reference' })
   
   // TAR files
-  addNode('tar_current', 'TAR_FILE', 720, 100, { label: 'Current TAR', description: 'Cannot delete' })
-  addNode('tar_pinned', 'TAR_FILE', 720, 250, { label: 'Pinned TAR', description: 'Cannot delete' })
-  addNode('tar_blocked', 'TAR_FILE', 720, 400, { label: 'Blocked TAR', description: 'Should delete but cannot' })
+  addNode('tar_current', 'TAR_FILE', 720, 100, { label: 'New Gen: HEAD', description: 'Compacted HEAD content' })
+  addNode('tar_pinned', 'TAR_FILE', 720, 250, { label: 'New Gen: Active CP', description: 'Mostly shared with HEAD' })
+  addNode('tar_blocked', 'TAR_FILE', 720, 400, { label: 'New Gen: Orphans', description: 'Copied forward on every GC' })
   
   addEdge('head', 'seg_current', 'REFERENCE')
   addEdge('async', 'cp_active', 'REFERENCE', { label: 'refs' })
@@ -312,7 +311,7 @@ function initCheckpointPin() {
   addEdge('cp_orphan2', 'seg_orphan', 'REFERENCE', { label: 'pins' })
   addEdge('seg_current', 'tar_current', 'DATA')
   addEdge('seg_pinned', 'tar_pinned', 'DATA')
-  addEdge('seg_orphan', 'tar_blocked', 'DATA', { label: 'blocks' })
+  addEdge('seg_orphan', 'tar_blocked', 'DATA', { label: 'copied' })
 }
 
 function initRecoveryDecision() {
@@ -330,7 +329,7 @@ function initRecoveryDecision() {
   
   // Recovery options
   addNode('rollback', 'BACKUP', 600, 60, { label: 'Rollback', description: 'recover-journal (fast)' })
-  addNode('surgical', 'COMPACTION', 600, 140, { label: 'Surgical', description: 'count-nodes + remove-nodes' })
+  addNode('surgical', 'COMPACTION', 600, 140, { label: 'Surgical', description: 'count-nodes + remove-node(s)' })
   addNode('sidegrade', 'COMPACTION', 600, 220, { label: 'Sidegrade', description: 'oak-upgrade extract' })
   addNode('restore', 'BACKUP', 600, 320, { label: 'Restore Backup', description: 'Only option' })
   
@@ -518,9 +517,9 @@ async function playAnimation() {
     ],
     'tar-lifecycle': [
       [{ from: 'gen_a1', to: 'compact', color: '#4ade80' }, { from: 'gen_a2', to: 'compact', color: '#4ade80' }, { from: 'gen_a3', to: 'compact', color: '#4ade80' }],
-      [{ from: 'compact', to: 'gen_b1', color: '#22c55e' }, { from: 'compact', to: 'gen_b2', color: '#22c55e' }],
-      [{ from: 'gen_b1', to: 'cleanup', color: '#8b5cf6' }, { from: 'gen_b2', to: 'cleanup', color: '#8b5cf6' }],
-      [{ from: 'cleanup', to: 'bak', color: '#4ade80' }],
+      [{ from: 'compact', to: 'gen_b1', color: '#22c55e' }],
+      [{ from: 'compact', to: 'cleanup', color: '#8b5cf6' }],
+      [{ from: 'cleanup', to: 'gen_b2', color: '#22c55e' }, { from: 'cleanup', to: 'bak', color: '#ef4444' }],
     ],
     'compaction': [
       [{ from: 'head', to: 'seg_live1', color: '#3b82f6' }, { from: 'head', to: 'seg_live2', color: '#3b82f6' }],
