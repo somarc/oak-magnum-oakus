@@ -400,12 +400,12 @@ function initPreTextExtraction() {
   addNode('text_store', 'TEXT_STORE', 620, 280, { label: 'Pre-extracted Store', description: './store directory' })
   
   // Alternative: Use existing index
-  addNode('existing_idx', 'INDEX', 250, 380, { label: 'Existing Index', description: 'damAssetLucene dump' })
+  addNode('existing_idx', 'INDEX', 250, 380, { label: 'Index Dump', description: 'Text stored on the binary node' })
   addNode('tika_populate', 'COMPACTION', 420, 380, { label: 'tika --populate', description: 'Reuse indexed text' })
   
   // Phase 3: Configure OSGi
-  addNode('osgi', 'OSGI', 780, 200, { label: 'OSGi Config', description: 'PreExtractedTextProvider' })
-  addNode('reindex', 'INDEX', 780, 340, { label: 'Re-index', description: 'Fast re-indexing' })
+  addNode('osgi', 'OSGI', 780, 200, { label: 'Point Indexer', description: 'OSGi or --pre-extracted-text-dir' })
+  addNode('reindex', 'INDEX', 780, 340, { label: 'Re-index', description: 'Store used during reindex' })
   addNode('success', 'SUCCESS', 900, 270, { label: 'Complete', description: 'Index rebuilt' })
   
   // Edges - Phase 1
