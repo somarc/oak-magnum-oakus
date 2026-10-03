@@ -37,7 +37,11 @@ incident:
   card:
     note: Print this · Laminate it · Tape it to your monitor
     title: Crisis checklist
+    start: 0
     steps:
+      - title: Stop the bleeding
+        body: "Stop AEM. Must it keep running? Pause GC first (JMX: <code>PausedCompaction</code>). Delete nothing, and don't start AEM on the damaged store until a box below says so."
+        link: "/crisis/#🛑-step-0-stop-the-bleeding"
       - title: Do you have a backup?
         body: "Recent, tested (&lt; 24 hours)? <strong>Restore it now.</strong> Stop reading. Old backup the business won't accept, or none: continue, and prepare for data loss. Don't know? Find out first."
         link: "/crisis/#✅-step-1-do-you-have-a-backup"
@@ -45,7 +49,7 @@ incident:
         body: "<code>segmentstore/</code> under <code>crx-quickstart/repository/</code>: SegmentStore (TarMK), continue. DocumentNodeStore is out of scope. Not sure what you're looking at? Stop. Get someone who knows Oak."
         link: "/crisis/#✅-step-2-identify-your-repository-type"
       - title: Run the diagnostic
-        body: "Stop AEM. Use the oak-run release that matches your oak-core, and save the output."
+        body: "AEM stays stopped. Use the oak-run release that matches your oak-core, and save the output."
         command: "java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log"
         link: "/crisis/#✅-step-3-run-diagnostic-command"
         outcomes:
@@ -69,7 +73,7 @@ incident:
         link: "/crisis/#✅-step-5-last-resort-no-good-revision"
     never:
       text: "let online GC or <code>compact</code> run before <code>check</code>, when <code>check</code> shows any errors, or while you suspect corruption."
-      more: All seven never-dos
+      more: The full never-do list
       link: "/crisis/#🚫-never-do-these"
   symptoms:
     title: What are you seeing?
@@ -82,8 +86,8 @@ incident:
       - signal: "Unable to access revision …, rewinding..."
         log: true
         cause: Journal entries point at missing segments. Oak rewinds to an older revision, so recent changes look lost.
-        dest: "Crisis checklist, box 3"
-        link: "/crisis/#✅-step-3-run-diagnostic-command"
+        dest: "Crisis checklist, box 0"
+        link: "/crisis/#🛑-step-0-stop-the-bleeding"
       - signal: "IllegalStateException: … is in use by another store."
         log: true
         cause: The store is already open (repo.lock held). If startup just hangs, another process holds it. Find it with lsof; don't delete the lock.

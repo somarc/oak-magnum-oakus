@@ -354,8 +354,8 @@ function initRecoveryDecision() {
   // Recovery options
   addNode('rollback', 'BACKUP', 600, 50, { label: 'Rollback', description: 'recover-journal (fast)' })
   addNode('surgical', 'COMPACTION', 600, 142, { label: 'Surgical', description: 'count-nodes + remove-node(s)' })
-  addNode('sidegrade', 'COMPACTION', 600, 326, { label: 'Sidegrade', description: 'oak-upgrade extract' })
-  addNode('restore', 'BACKUP', 600, 234, { label: 'Restore Backup', description: 'Only option' })
+  addNode('sidegrade', 'COMPACTION', 600, 326, { label: 'Rebuild, Sidegrade', description: 'recover-journal, then oak-upgrade' })
+  addNode('restore', 'BACKUP', 600, 234, { label: 'Restore Backup', description: 'Safest option' })
   
   // Outcomes
   addNode('success', 'SUCCESS', 780, 142, { label: 'Recovered', description: 'Repository accessible' })
@@ -367,7 +367,8 @@ function initRecoveryDecision() {
   addEdge('check_result', 'check_fail', 'DELETE', { label: 'error' })
   addEdge('good_rev', 'rollback', 'CONTROL', { label: 'fast' })
   addEdge('good_rev', 'surgical', 'CONTROL', { label: 'preserve' })
-  addEdge('no_good', 'sidegrade', 'CONTROL', { label: 'extract' })
+  addEdge('no_good', 'restore', 'CONTROL', { label: 'backup' })
+  addEdge('no_good', 'sidegrade', 'CONTROL', { label: 'no backup' })
   addEdge('check_fail', 'restore', 'DELETE', { label: 'only' })
   addEdge('rollback', 'success', 'COPY')
   addEdge('surgical', 'success', 'COPY')

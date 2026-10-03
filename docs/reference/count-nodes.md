@@ -73,7 +73,7 @@ Segment ID abc123...: 3 occurrences
 > :count-nodes deep analysis
 ```
 
-`segment-binaries`, `datastore-binaries` and `deep` are mutually exclusive.
+`segment-binaries`, `datastore-binaries` and `deep` are mutually exclusive. `datastore-binaries` and `deep` need the console started with your DataStore options (`--fds-path`, `--fds`, `--s3ds` or `--azureblobds`); without them every external binary is reported as a missing blob (`… without specifying BlobStore`).
 
 ## Log File Format
 

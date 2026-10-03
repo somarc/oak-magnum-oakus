@@ -51,7 +51,7 @@ $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
 ```
 
-`:count-nodes [segment-binaries | datastore-binaries | deep] [analysis]` always walks the whole tree from `/` (it takes no path argument) and only reads. `deep` also reads every segment and DataStore binary stream; `analysis` adds a grouped summary of corrupted paths with recovery hints.
+`:count-nodes [segment-binaries | datastore-binaries | deep] [analysis]` always walks the whole tree from `/` (it takes no path argument) and only reads. `deep` also reads every segment and DataStore binary stream; `analysis` adds a grouped summary of corrupted paths with recovery hints. Use `deep` (or `datastore-binaries`) only with your DataStore options (`--fds-path` …): without them every external binary is reported as a missing blob. For a missing-segment incident, `segment-binaries` reads everything the segment store holds.
 
 ### What count-nodes Does
 

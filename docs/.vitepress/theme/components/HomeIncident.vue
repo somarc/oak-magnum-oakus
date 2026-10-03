@@ -35,7 +35,7 @@ async function copy(command: string) {
 
         <ol class="steps">
           <li v-for="(step, i) in frontmatter.incident.card.steps" :key="step.title" class="step">
-            <span class="box" aria-hidden="true">{{ i + 1 }}</span>
+            <span class="box" aria-hidden="true">{{ i + (frontmatter.incident.card.start ?? 1) }}</span>
             <div class="step-body">
               <VPLink class="step-title" :href="step.link">{{ step.title }}</VPLink>
               <p v-if="step.body" v-html="step.body" />

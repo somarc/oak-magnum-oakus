@@ -14,9 +14,10 @@ Follow the boxes in order. Check them off as you go. **DO NOT SKIP BOXES.**
 
 | Signal | Likely Cause | Jump To |
 |--------|--------------|---------|
-| `SegmentNotFoundException: Segment xyz not found` | Segment corruption or missing TAR | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `SegmentNotFoundException: Segment xyz not found` | Segment corruption or a missing TAR file. Only a log line ending in a GC tag (`…ms,[pre-compaction cleanup]`) is the rare [reader that outlived its GC cycle](/recovery/snfe-playbook#scenario-3-a-reader-outlived-its-gc-cycle-rare) | [Step 0](#🛑-step-0-stop-the-bleeding) |
+| `compaction encountered an error` in a GC run | Compaction read a missing segment. That run's cleanup had already deleted older generations | [Step 0](#🛑-step-0-stop-the-bleeding) |
 | TarMK refuses to start | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
-| `Unable to access revision …, rewinding...` (WARN) | Journal entries point at missing segments; Oak falls back to an older revision, so recent changes look lost | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `Unable to access revision …, rewinding...` (WARN) | Journal entries point at missing segments; Oak falls back to an older revision, so recent changes look lost | [Step 0](#🛑-step-0-stop-the-bleeding) |
 | `IllegalStateException: … is in use by another store.`, or startup hangs | Store already open in the same JVM, or another process holds `repo.lock` (find it with `lsof`; don't delete the lock) | [Repository Won't Start](/reference/troubleshooting#repository-won-t-start) |
 | `OutOfMemoryError` during startup | Heap too small for repo size | Not corruption — increase heap |
 | Disk 100% full | Free space first: a full disk can stop the repository opening. Don't compact to make room; compaction itself needs 2× the store size | [Step 3](#✅-step-3-run-diagnostic-command) |
@@ -42,11 +43,28 @@ du -sh crx-quickstart/repository/segmentstore/
 On-premise AEM installations commonly have **500GB-2TB** segment stores.
 :::
 
+## 🛑 Step 0: Stop the Bleeding
+
+```
+[ ] Stop AEM (crx-quickstart/bin/stop)
+    → Must it keep running for now? Pause GC first:
+      JMX → SegmentRevisionGarbageCollection → PausedCompaction = true
+      (and cancelRevisionGC if a run is in progress)
+[ ] Don't start AEM on the damaged store until a step below says so
+[ ] Don't delete anything: not TAR files, not journal.log, not the store
+```
+
+Every GC run deletes older generations *before* it compacts, and those are the copies recovery needs. Starting AEM on a damaged store can silently rewind it, or even write a new, empty repository over it ([why](/architecture/bricked)).
+
+---
+
 ## ✅ Step 1: Do You Have a Backup?
 
 ```
-[ ] YES, and it's RECENT (< 24 hours old)
+[ ] YES, and it's RECENT (< 24 hours old) and TESTED
     → RESTORE IT NOW. Stop reading. You're done.
+    → Move the damaged segmentstore/ aside instead of deleting it:
+      you'll want it to find out what happened
     
 [ ] YES, but it's OLD (days/weeks/months old)
     → Business won't accept the data loss?
@@ -80,9 +98,11 @@ If your backup is 2 weeks old and business says "we can't lose 2 weeks of work,"
     → Use commands: check, recover-journal, console
     → NEVER use: compact (unless explicitly instructed)
     
-[ ] I see: MongoDB or database connection in the DocumentNodeStoreService OSGi config
+[ ] I see: a MongoDB or database connection in the
+    DocumentNodeStoreService OSGi config
     → You have DocumentNodeStore (MongoMK/RDB)
-    → Out of scope for this guide (`check` and `recover-journal` are SegmentStore-only; `oak-run recovery` is the DocumentNodeStore tool)
+    → Out of scope for this guide: check and recover-journal
+      are SegmentStore-only; DocumentNodeStore uses oak-run recovery
     → NEVER use: compact (SegmentStore only)
     
 [ ] I DON'T KNOW WHAT I'M LOOKING AT
@@ -118,8 +138,8 @@ java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log
 **Check the output:**
 
 ```
-[ ] Output says: "Latest good revision for paths and checkpoints checked is
-    <revision> from <date>"
+[ ] Output says: "Latest good revision for paths and
+    checkpoints checked is <revision> from <date>"
     → GOOD! Repository is recoverable.
     → Continue to Step 4
 
@@ -127,16 +147,18 @@ java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check.log
     → BAD! Repository is severely corrupted.
     → Jump to Step 5 (Last Resort)
 
-[ ] Output says: "... checked is none from unknown time" (exit code 0!)
-    → Not a good result. Read the Head and Checkpoints lines above it
+[ ] Output says: "... checked is none from unknown time"
+    → Exit code 0, but NOT a good result
+    → Read the Head and Checkpoints lines above it
     → Head shows a revision, only a checkpoint shows none?
-      Content is intact: see "Only a checkpoint is broken" (link below)
+      Content is intact: see the link below this box
     → Head shows none too? Jump to Step 5 (Last Resort)
 
-[ ] Command FAILS with "SegmentNotFoundException" or "IOException"
-    (a stack trace instead of a result - check could not open the store)
-    → Trace runs through SegmentNodeStore.checkpoints? The store did open:
-      run check --head first
+[ ] Command FAILS: a stack trace instead of a result
+    ("SegmentNotFoundException", "Failed to open tar file …" or
+     "Cannot start readonly store from empty journal")
+    → Trace runs through SegmentNodeStore.checkpoints?
+      The store did open: run check --head first
     → Otherwise VERY BAD! Repository is bricked.
     → Restore from backup. No other option.
 ```
@@ -147,6 +169,11 @@ Only a checkpoint is broken, or wondering how it got this bad? See [Why Reposito
 
 ## ✅ Step 4: Choose Recovery Path
 
+```
+[ ] segmentstore/ is copied somewhere safe (e.g. rsync -a)
+    → recover-journal rewrites journal.log; remove-nodes has no undo
+```
+
 <OakFlowGraph flow="recovery-decision" />
 
 ### Option A: Journal Recovery (simpler procedure, loses recent changes, SAFE)
@@ -155,12 +182,17 @@ Only a checkpoint is broken, or wondering how it got this bad? See [Why Reposito
 java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 ```
 
+```bash
+java -jar oak-run-*.jar check /path/to/segmentstore \
+    2>&1 | tee check2.log
 ```
-[ ] Command completed successfully
-    → Start AEM
-    → You're done!
-    
-[ ] Command failed
+
+```
+[ ] "Journal recovered" and check reports a good revision
+    → Note that revision's date: everything after it is lost
+    → Start AEM. You're done!
+
+[ ] Any "…, aborting" message, or check still finds problems
     → Try Option B
 ```
 
@@ -171,18 +203,20 @@ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 :::
 
 ```bash
+cd /safe/workdir   # count-nodes and remove-nodes write logs here
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
-> :count-nodes deep analysis
+> :count-nodes segment-binaries analysis
 # WAIT FOR IT TO FINISH (may take hours)
-# Creates log file in the directory you launched oak-run from:
-#   count-nodes-snfe-YYYYMMDD-HHmmss.log
+# Writes count-nodes-snfe-YYYYMMDD-HHmmss.log
 ```
+
+`segment-binaries` reads everything stored in the segment store. `deep` also reads every DataStore binary: use it only with your DataStore options (`--fds-path` …), or every external binary is reported missing ([count-nodes](/reference/count-nodes)).
 
 **Read the log file:**
 
 ```
 [ ] Log shows ONLY paths like: /content/dam/xyz, /var/audit/abc
-    → These are SAFE to remove
+    → Removable, if the business accepts losing them
     → Continue below
     
 [ ] Log shows ANY of these paths:
@@ -196,25 +230,49 @@ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
     → Restore from backup OR attempt sidegrade
 ```
 
-**If safe to remove:**
+**If removable:**
 
 ```bash
 > :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log dry-run
+# Spell "dry-run" exactly: --dry-run or dryrun is a REAL run
 # Use the exact file name - wildcards are NOT expanded
-# READ THE REPORT in remove-nodes-YYYYMMDD-HHmmss.log - make sure it's not deleting critical stuff
+# READ THE REPORT in remove-nodes-YYYYMMDD-HHmmss.log:
+#   [DELETE] … [DRY RUN]     what the real run will delete
+#   [WARN] … :remove-node    missing segments, NOT deleted
 > :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log
-# Wait for it to finish
+# Only if the [DELETE] list is acceptable
+> :remove-node /content/dam/example/path
+# Once for EACH missing-segment path the report names
+> :count-nodes segment-binaries
+# Should now find no missing segments
 > :exit
 ```
 
-::: info What `:remove-nodes` acts on
-It deletes nodes for `Warning: Missing blob at … DataStoreException: Record …` lines, `Warning: Unable to read node …` lines and datastore-consistency `aa/bb/cc/<hex>,<path>` lines, and refuses paths shallower than 3 levels. `Warning: Missing segment at …` lines are only logged as `[WARN]`, never deleted; the report prints the `:remove-node <path>` to run for each (no dry-run, no log). Each deletion is merged immediately — there is no undo.
+::: info What the removal commands act on
+- `:remove-nodes` deletes for `Warning: Missing blob at … DataStoreException: Record …` lines, `Warning: Unable to read node …` lines and datastore-consistency `aa/bb/cc/<hex>,<path>` lines, and refuses paths shallower than 3 levels. A missing **original** rendition deletes the **whole asset** ([details](/recovery/surgical)).
+- `Warning: Missing segment at …` lines are only logged as `[WARN]`; the report prints the `:remove-node <path>` to run for each. A `Missing blob at …: Segment … not found` line gets neither: choose the path yourself.
+- `:remove-node` has no dry-run, writes no log, and refuses only the root and top-level nodes. It will delete `/content/dam` if you ask it to.
+- Each deletion is merged immediately and skips commit hooks: there is no undo, and synchronous indexes (uuid, nodetype, references) keep entries for the removed nodes. If anything under `/oak:index` was flagged, plan a reindex.
 :::
 
 **Verify:**
 
 ```bash
-java -jar oak-run-*.jar check /path/to/segmentstore
+java -jar oak-run-*.jar check /path/to/segmentstore \
+    2>&1 | tee check3.log
+```
+
+```
+[ ] check reports a good revision
+    → Write down what you removed
+    → Start AEM, then reindex what the removals touched
+
+[ ] Head shows a revision, but a checkpoint shows none
+    → The checkpoints still reference what you removed:
+      see "Only a checkpoint is broken" (link in Step 3)
+
+[ ] Still no good revision
+    → Step 5
 ```
 
 ---
@@ -224,6 +282,8 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 **This will lose data. Accept that now.**
 
 ```
+[ ] segmentstore/ is copied somewhere safe (see Step 4)
+
 [ ] You have a backup, even an old one?
     → Reconsider it now. Restoring is faster, safer and more predictable
       than anything below.
@@ -235,7 +295,8 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 
 ```bash
 java -jar oak-run-*.jar recover-journal /path/to/segmentstore
-java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check2.log
+java -jar oak-run-*.jar check /path/to/segmentstore \
+    2>&1 | tee check2.log
 ```
 
 ```
@@ -247,14 +308,16 @@ java -jar oak-run-*.jar check /path/to/segmentstore 2>&1 | tee check2.log
 
 [ ] Any "…, aborting" message, or check still finds no good revision
     → Continue to 5b
-    ("Too many journal backups, please cleanup" is different: move the old
-     journal.log.bak.* files out of segmentstore/ and run it again)
+    ("Too many journal backups, please cleanup" is different:
+     move the old journal.log.bak.* files out of segmentstore/
+     and run it again)
 ```
 
 ### 5b. Sidegrade what can be read
 
 ```bash
-# oak-upgrade release matching your oak-core; paths are repository dirs (each containing segmentstore/)
+# oak-upgrade release matching your oak-core
+# paths are repository dirs, each containing segmentstore/
 java -jar oak-upgrade-<oak-version>.jar \
     --exclude-paths=/path/that/check/flagged \
     /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
@@ -285,6 +348,8 @@ The sidegrade stops at the first unreadable node, so leave known-corrupt paths o
 | Skip the "dry-run" before remove-nodes | You might delete critical data |
 | Use recover-journal on DocumentNodeStore | Wrong command for wrong repo type |
 | Panic and run random commands | You will make it worse |
+| Start AEM on a store `check` can't open | It can rewind silently, rebuild damaged TAR files, or write a new, empty repository over it ([why](/architecture/bricked#path-4-starting-aem-on-a-store-check-can-t-open)) |
+| Delete TAR files, `journal.log` or the damaged store before you have a copy | Old-looking TAR files are often the compacted base: most of your content |
 | Let online GC run after a `SegmentNotFoundException` | Each run deletes older generations *before* it compacts; a failed compaction doesn't bring them back ([why](/architecture/bricked)) |
 
 ---
@@ -292,14 +357,14 @@ The sidegrade stops at the first unreadable node, so leave known-corrupt paths o
 ## ⏱️ Time Estimates
 
 ::: danger ⚠️ CRITICAL: Time Scales With Repository Size
-All oak-run operations are **I/O bound** and must traverse the entire segment store. There is no way to parallelize or speed up these operations (exception: offline `compact --threads N` runs the parallel compactor *(since Oak 1.58 — not in AEM 6.5)*).
+The recovery operations below are **I/O bound** and read most of the segment store. There is no way to parallelize or speed them up (exception: offline `compact --threads N` runs the parallel compactor *(since Oak 1.58 — not in AEM 6.5)*).
 :::
 
 ### Baseline: 100GB Repository (SSD)
 
 | Operation | Time Estimate | Notes |
 |-----------|--------------|-------|
-| `oak-run check` | 15 minutes | Faster if corruption found early |
+| `oak-run check` | 15 minutes | One pass if the newest revision is good. Damage makes it walk back through the journal, one attempt per revision; `--last N` limits that |
 | `oak-run recover-journal` | 30-45 minutes | Traverses all segments |
 | `count-nodes` (full scan) | 2 hours | Tests every node + blob |
 | `remove-nodes` | 10-30 minutes | Depends on paths to remove |
@@ -308,13 +373,15 @@ All oak-run operations are **I/O bound** and must traverse the entire segment st
 
 ### Production Reality: Scaling
 
-| Repository Size | Multiply Baseline By | Example: recover-journal |
-|-----------------|---------------------|--------------------------|
-| 100GB | 1x | ~30-45 min |
-| 500GB | 4-6x | ~2-4 hours |
-| 1TB | 10-15x | ~6-12 hours |
-| 2TB | 20-30x | ~24-48 hours |
-| 3TB+ | 40-50x | ~48-96 hours (multi-day) |
+| Repository Size | Example: recover-journal ([Journal Recovery](/recovery/journal#time-estimates)) |
+|-----------------|--------------------------|
+| 100GB | ~30-45 min |
+| 500GB | ~2-4 hours |
+| 1TB | ~6-12 hours |
+| 2TB | ~24-48 hours |
+| 3TB+ | ~48-96 hours (multi-day) |
+
+Above 1 TB, times grow faster than the size does: plan in days, not in multiples of the 100 GB baseline.
 
 ::: tip On-Prem Reality
 Production on-premise AEM installations commonly have **500GB-2TB** segment stores after years of content accumulation. A 2TB repository recovery is a **multi-day operation**.
