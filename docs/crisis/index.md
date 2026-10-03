@@ -2,7 +2,8 @@
 
 ::: danger 🎯 SCOPE
 Requires filesystem access to run `oak-run` commands.  
-**Not for AEMaaCS**
+**Not for AEMaaCS**  
+Use the oak-run release matching your repository's Oak version: `oak-run-1.22.x.jar` for AEM 6.5; for AEM 6.5 LTS the oak-run equal to your oak-core version (`oak-run-2.4.0.jar` on SP3, Java 17+) — see [which LTS SP has which Oak](/reference/oak-versions).
 :::
 
 **PRINT THIS - LAMINATE IT - TAPE IT TO YOUR MONITOR**
@@ -14,8 +15,8 @@ Follow the boxes in order. Check them off as you go. **DO NOT SKIP BOXES.**
 | Signal | Likely Cause | Jump To |
 |--------|--------------|---------|
 | `SegmentNotFoundException: Segment xyz not found` | Segment corruption or missing TAR | [Step 3](#✅-step-3-run-diagnostic-command) |
-| `TarMK refuses to start` / `Failed to open TarMK` | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
-| `IllegalStateException: Cannot read from closed store` | Unclean shutdown, lock file | [Identify Repo Type](/crisis/identify-repo) |
+| `TarMK refuses to start` / `Unable to access revision …, rewinding...` | Journal or TAR corruption | [Step 3](#✅-step-3-run-diagnostic-command) |
+| `IllegalStateException: … is in use by another store.` | Store already open in the same JVM (`repo.lock` held) | [Identify Repo Type](/crisis/identify-repo) |
 | `OutOfMemoryError` during startup | Heap too small for repo size | Not corruption — increase heap |
 | Disk 100% full | Checkpoint bloat or GC not running | [Checkpoints](/checkpoints/) |
 | `DataStoreException: Record does not exist` | Missing blob in DataStore | [DataStore Consistency](/datastore/consistency) |
@@ -77,9 +78,9 @@ If your backup is 2 weeks old and business says "we can't lose 2 weeks of work,"
     → Use commands: check, recover-journal, console
     → NEVER use: compact (unless explicitly instructed)
     
-[ ] I see: MongoDB or database connection in repository.xml
+[ ] I see: MongoDB or database connection in the DocumentNodeStoreService OSGi config
     → You have DocumentNodeStore (MongoMK/RDB)
-    → Use commands: check, recovery (NOT recover-journal)
+    → Out of scope for this guide (`check` and `recover-journal` are SegmentStore-only; `oak-run recovery` is the DocumentNodeStore tool)
     → NEVER use: compact (SegmentStore only)
     
 [ ] I DON'T KNOW WHAT I'M LOOKING AT
@@ -145,15 +146,16 @@ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 
 ### Option B: Surgical Removal (preserves more data, SLOWER)
 
-::: warning ⚠️ Requires somarc Fork
-`:count-nodes` and `:remove-nodes` are only in [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak). Build oak-run from that fork first.
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes`, `:remove-nodes` and `:remove-node` are not part of Apache Jackrabbit Oak (any version). They come from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
 :::
 
 ```bash
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
 # WAIT FOR IT TO FINISH (may take hours)
-# Creates log file: /tmp/count-nodes-snfe-*.log
+# Creates log file in the directory you launched oak-run from:
+#   count-nodes-snfe-YYYYMMDD-HHmmss.log
 ```
 
 **Read the log file:**
@@ -177,12 +179,17 @@ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 **If safe to remove:**
 
 ```bash
-> :remove-nodes /tmp/count-nodes-snfe-*.log dry-run
-# READ THE OUTPUT - make sure it's not deleting critical stuff
-> :remove-nodes /tmp/count-nodes-snfe-*.log
+> :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log dry-run
+# Use the exact file name - wildcards are NOT expanded
+# READ THE REPORT in remove-nodes-YYYYMMDD-HHmmss.log - make sure it's not deleting critical stuff
+> :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log
 # Wait for it to finish
 > :exit
 ```
+
+::: info What `:remove-nodes` acts on
+It deletes nodes for `Warning: Missing blob at … DataStoreException: Record …` lines and datastore-consistency `aa/bb/cc/<hex>,<path>` lines (its `Warning: Unable to read node` handling is buggy — don't rely on it), and refuses paths shallower than 3 levels. `Warning: Missing segment at …` lines are only logged as `[WARN]`, never deleted; remove those paths one at a time with the fork's `:remove-node <path>` (no dry-run, no log). Each deletion is merged immediately — there is no undo.
+:::
 
 **Verify:**
 
@@ -197,9 +204,13 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 **This will lose data. Accept that now.**
 
 ```bash
-java -jar oak-upgrade-*.jar upgrade --copy-binaries \
-    /path/to/corrupted /path/to/new-repo
+# oak-upgrade release matching your oak-core; paths are repository dirs (each containing segmentstore/)
+java -jar oak-upgrade-<oak-version>.jar \
+    --exclude-paths=/path/that/check/flagged \
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
+
+The sidegrade stops at the first unreadable node, so leave known-corrupt paths out with `--exclude-paths`. It copies blob references only; keep the same DataStore or see [Sidegrade](/recovery/sidegrade) to move binaries.
 
 ```
 [ ] Command extracted SOME content
@@ -230,7 +241,7 @@ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
 ## ⏱️ Time Estimates
 
 ::: danger ⚠️ CRITICAL: Time Scales With Repository Size
-All oak-run operations are **I/O bound** and must traverse the entire segment store. There is no way to parallelize or speed up these operations.
+All oak-run operations are **I/O bound** and must traverse the entire segment store. There is no way to parallelize or speed up these operations (exception: offline `compact --threads N` runs the parallel compactor *(since Oak 1.58 — not in AEM 6.5)*).
 :::
 
 ### Baseline: 100GB Repository (SSD)

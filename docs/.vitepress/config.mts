@@ -31,6 +31,7 @@ export default withMermaid(
         { text: '🛠️ Recovery', link: '/recovery/' },
         { text: '📋 Checkpoints', link: '/checkpoints/' },
         { text: '📚 Reference', link: '/reference/' },
+        { text: '🎯 Oak Versions', link: '/reference/oak-versions' },
       ],
 
       sidebar: {
@@ -95,6 +96,7 @@ export default withMermaid(
             collapsed: true,
             items: [
               { text: 'Command Reference', link: '/reference/' },
+              { text: 'Oak Version Scope', link: '/reference/oak-versions' },
               { text: 'count-nodes', link: '/reference/count-nodes' },
               { text: 'Console Commands', link: '/reference/console' },
               { text: 'Troubleshooting', link: '/reference/troubleshooting' },

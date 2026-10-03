@@ -1,6 +1,6 @@
 # Generational Garbage Collection
 
-Oak uses a generational garbage collection algorithm based on **revision roots**.
+Oak uses a generational garbage collection algorithm: compaction copies the **current root** into a new **GC generation**, and cleanup drops segments of old generations.
 
 ## Understanding Revision Roots
 
@@ -21,10 +21,10 @@ graph LR
 ```
 
 **How Roots Work:**
-- **R1, R2, R3**: Old revisions - Each points to segments containing historical state
+- **R1, R2, R3**: Old revisions - Each points to segments containing historical state; GC does **not** keep them as roots
 - **HEAD**: Current revision - Points to segments with current repository state
-- **Garbage Collection**: Walks from HEAD backwards, marks all reachable segments as "live"
-- **Cleanup**: Deletes segments NOT reachable from any kept root
+- **Compaction**: Rewrites HEAD **and all checkpoints** into new segments of a new GC generation (old revisions are never copied)
+- **Cleanup**: Deletes data segments whose GC generation is 2 or more generations old (retained generations are fixed at 2); bulk (binary) segments go when no retained segment references them
 
 ## The GC Cycle
 
@@ -33,23 +33,23 @@ graph LR
 ### Three Phases
 
 1. **Estimation Phase**
-   - Calculate how much garbage exists
-   - Determine if compaction is worthwhile (threshold: 25%)
-   - Estimate time and resources needed
+   - Compare repository growth since the last GC (full GC: since the last full one; size recorded in `gc.log`) with `compaction.sizeDeltaEstimation` (default 1 GiB; `0` = always run)
+   - Skip GC if it grew less (`... so skipping garbage collection`); always run when `gc.log` has no data yet; a full GC also always runs right after a tail GC
+   - Skipped entirely with `compaction.disableEstimation=true`
 
 2. **Compaction Phase**
-   - Traverse content tree from root
-   - Mark all reachable segments as "live"
-   - Copy live segments to new generation
-   - Skip unreachable (garbage) segments
+   - Traverse content tree from root (HEAD and every checkpoint)
+   - Rewrite every reachable record into new segments of the new generation
+   - Garbage is simply never copied
+   - Concurrent commits: up to `compaction.retryCount` (5) catch-up cycles, then force-compact while blocking writes for up to `compaction.force.timeout` (60 s); cancelled if free heap drops below `compaction.memoryThreshold` (15%)
 
 3. **Cleanup Phase**
-   - Rename old generation files to `.tar.bak`
-   - Verify new generation is healthy
-   - Delete old generation files (in theory - see note below)
+   - Mark segments of old generations as reclaimable
+   - Rewrite TAR files with more than 25% reclaimable as the next letter; drop TAR files with nothing left
+   - The file reaper deletes the replaced files (`Removed files ...`)
 
 ::: warning .tar.bak Cleanup Reality
-Despite the design intent, `.tar.bak` files often **linger indefinitely** and must be manually deleted after verifying the new generation is healthy. See [TAR Files](/architecture/tar-files) for details.
+GC never creates `.tar.bak` files. They come from automatic TAR index recovery, **linger indefinitely**, and must be manually deleted after verifying the store is healthy. See [TAR Files](/architecture/tar-files) for details.
 :::
 
 ## Offline vs Online GC
@@ -68,12 +68,18 @@ java -jar oak-run-*.jar compact /path/to/segmentstore
 | **Risk** | Lower |
 | **Downtime** | Required |
 
+::: info Oak 1.22 vs 2.4
+- **AEM 6.5 (Oak 1.22.x):** `oak-run compact` always runs a **full** compaction with the `CheckpointCompactor`; only `--mmap` and `--force` are accepted.
+- **AEM 6.5 LTS SP3 (Oak 2.4.0):** full by default; `--tail` *(since Oak 1.60)*, `--compactor classic|diff|parallel` *(since Oak 1.28; `parallel` since Oak 1.58, now the default)*, `--threads N` for `parallel` *(since Oak 1.58, default 1)*. See [which LTS SP has which Oak](/reference/oak-versions).
+:::
+
 ### Online GC (AEM Running)
 
 ```
-org.apache.jackrabbit.oak.plugins.segment.SegmentNodeStoreService
+org.apache.jackrabbit.oak.segment.SegmentNodeStoreService
   pauseCompaction = false
-  compaction.mode = "tail" or "full"
+  (no OSGi property for the GC type: it is the GCType attribute (FULL / TAIL)
+   of the SegmentRevisionGarbageCollection MBean; Oak's own default is FULL)
 ```
 
 | Aspect | Value |
@@ -90,14 +96,21 @@ org.apache.jackrabbit.oak.plugins.segment.SegmentNodeStoreService
 - Cache coherence overhead
 :::
 
+::: info Oak 1.22 vs 2.4 — online compactor
+- **AEM 6.5 (Oak 1.22.x):** online compaction always uses `CheckpointCompactor`.
+- **AEM 6.5 LTS SP3 (Oak 2.4.0):** online compaction uses the `parallel` compactor type *(since Oak 1.58)*, but with 1 thread (`SegmentGCOptions.DEFAULT_CONCURRENCY`), so it runs sequentially (`using sequential compaction.`); there is no OSGi property for the compactor type or thread count.
+:::
+
 ## Tail vs Full Compaction
 
-### Tail Compaction (Default)
+### Tail Compaction
 
 ```
 What it does:
-- Only compacts the MOST RECENT segments (the "tail")
-- Leaves older segments untouched
+- Only compacts the changes made since the previous compaction (the "tail"),
+  on top of the base written by that compaction
+- Leaves the already-compacted base untouched
+- Falls back to full compaction when there is no usable base
 - Faster, less resource intensive
 
 When to use:
@@ -107,7 +120,7 @@ When to use:
 
 Tradeoffs:
 - Reclaims less disk space
-- Doesn't clean up old garbage
+- Doesn't clean up garbage inside the compacted base (needs a full compaction)
 - Accumulates over time
 ```
 
@@ -115,8 +128,8 @@ Tradeoffs:
 
 ```
 What it does:
-- Compacts ALL generations (entire history)
-- Rewrites everything to new generation
+- Compacts the complete current HEAD and all checkpoints (not the history)
+- Rewrites everything to new generation (new "full generation")
 - Maximum disk space reclamation
 
 When to use:
@@ -134,29 +147,29 @@ Tradeoffs:
 
 ```
 Repository State:
-┌──────┬──────┬──────┬──────┬──────┐
-│ Gen0 │ Gen1 │ Gen2 │ Gen3 │ HEAD │
-│ 50GB │ 30GB │ 20GB │ 10GB │ 5GB  │
-└──────┴──────┴──────┴──────┴──────┘
+┌──────────────────────┬──────────────┬──────┐
+│ Base (last full GC)  │ Later writes │ HEAD │
+│ 50GB (incl. garbage) │ 30GB         │      │
+└──────────────────────┴──────────────┴──────┘
 
 Tail Compaction:
-┌──────┬──────┬──────┬────────────┐
-│ Gen0 │ Gen1 │ Gen2 │   Gen4     │  ← Only compacted Gen3 + HEAD
-│ 50GB │ 30GB │ 20GB │    12GB    │
-└──────┴──────┴──────┴────────────┘
-  ↑      ↑      ↑
-  Untouched (old garbage remains)
+┌──────────────────────┬────────────┐
+│ Base (last full GC)  │  New gen   │  ← Only the changes since the
+│ 50GB (incl. garbage) │    12GB    │     last compaction were rewritten
+└──────────────────────┴────────────┘
+  ↑
+  Kept as-is (garbage inside it remains)
 
 Full Compaction:
 ┌─────────────────────────────────┐
-│           Gen5                  │  ← Compacted EVERYTHING
-│           85GB                  │     (removed 30GB garbage)
+│        New full gen             │  ← Rewrote the whole current HEAD
+│           50GB                  │     (old generations reclaimed after cleanup)
 └─────────────────────────────────┘
 ```
 
-## 🔥 CRITICAL: Long-Lived Sessions + Tail Compaction = SegmentNotFoundException
+## 🔥 CRITICAL: Long-Lived Sessions + Tail Compaction = SegmentNotFoundException {#long-lived-sessions-tail-compaction}
 
-This is a **race condition**, NOT corruption. Understanding this prevents misdiagnosis.
+This is a **race condition**, NOT corruption. Understanding this prevents misdiagnosis. (Full compaction behaves the same way: cleanup reclaims by GC generation, not by session.)
 
 ### The Scenario
 
@@ -194,7 +207,7 @@ Session lifecycle:
 
 - ❌ Tail compaction doesn't track active sessions (performance optimization)
 - ❌ Assumes sessions are short-lived (minutes, not hours)
-- ❌ Cleanup phase is aggressive (deletes old generations immediately)
+- ❌ Cleanup reclaims every generation 2+ GC cycles old — a session survives one GC cycle, not two
 - ❌ No "pinning" mechanism for segments referenced by active sessions
 
 ### How to Detect This Pattern
@@ -215,9 +228,10 @@ $ grep -A 5 "SegmentNotFoundException" error.log | grep -B 5 "Segment.*not found
 ### Example Log Pattern
 
 ```
-2025-10-06 02:15:00 *INFO* [FelixStartLevel] Tail compaction started
-2025-10-06 02:45:00 *INFO* [FelixStartLevel] Tail compaction completed
-2025-10-06 02:46:00 *INFO* [FelixStartLevel] Cleanup: Deleted Gen0, Gen1, Gen2
+2025-10-06 02:15:00 *INFO* [...] TarMK GC #12: running tail compaction
+2025-10-06 02:45:00 *INFO* [...] TarMK GC #12: compaction succeeded in …, after 1 cycles
+2025-10-06 02:46:00 *INFO* [...] TarMK GC #12: cleanup marking files for deletion: data00010a.tar,data00011a.tar
+2025-10-06 02:46:05 *INFO* [...] Removed files data00010a.tar,data00011a.tar
 2025-10-06 03:10:00 *ERROR* [DAM Update Asset Workflow] 
   org.apache.jackrabbit.oak.segment.SegmentNotFoundException: 
   Segment aaa-bbb-ccc-111 not found
@@ -231,20 +245,21 @@ $ grep -A 5 "SegmentNotFoundException" error.log | grep -B 5 "Segment.*not found
 
 ### Solutions
 
-**Option 1: Increase Revision Retention** (Safest)
+**Option 1: Increase Revision Retention** (Not available on TarMK)
 ```
-org.apache.jackrabbit.oak.plugins.segment.SegmentNodeStoreService
-  revisionGcMaxAgeInSecs = 259200 (3 days instead of 24 hours)
-  
-→ Keeps old revisions longer
-→ Gives long-lived sessions more time
-→ Tradeoff: More disk space used, slower compaction
+org.apache.jackrabbit.oak.segment.SegmentNodeStoreService
+  compaction.retainedGenerations = 2 (fixed: other values are ignored with a WARN
+                                      "... can't be changed ...")
+
+→ There is no age-based revision retention in the segment store
+→ A session can only outlive ONE GC cycle
+→ Use Options 2-4 instead
 ```
 
 **Option 2: Disable Tail Compaction, Use Full Compaction Only** (Most Aggressive)
 ```
-org.apache.jackrabbit.oak.plugins.segment.SegmentNodeStoreService
-  pauseCompaction = true (disable online tail compaction)
+org.apache.jackrabbit.oak.segment.SegmentNodeStoreService
+  pauseCompaction = true (skips online compaction - tail and full - and its cleanup)
   
 Then schedule offline full compaction during maintenance windows:
 $ java -jar oak-run.jar compact /path/to/segmentstore
@@ -286,7 +301,7 @@ If you know:
 
 Then:
 - Reschedule tail compaction to 06:00 (after workflows complete)
-- OR: Increase retention to cover workflow duration
+- OR: Make sure no session spans two GC runs
 ```
 
 ### Key Takeaways
@@ -294,7 +309,7 @@ Then:
 - 💡 Tail compaction assumes **short-lived sessions** (minutes, not hours)
 - 💡 Long-lived sessions + tail compaction = **SegmentNotFoundException risk**
 - 💡 This is **NOT corruption** - it's a race condition between session lifecycle and GC
-- 💡 Increasing `revisionGcMaxAgeInSecs` is the **safest mitigation**
+- 💡 Retention can't be increased on TarMK (`compaction.retainedGenerations` is fixed at 2) - **scheduling GC around long jobs** is the safest mitigation
 - 💡 Fixing application code to refresh/reopen sessions is the **best long-term solution**
 - 💡 This pattern is **hard to diagnose** because it's intermittent (only happens when timing aligns)
 
@@ -302,10 +317,12 @@ Then:
 
 ::: danger ⚠️ NEVER Run Compaction on Corrupted Repository
 If corruption exists **before** compaction runs:
-1. Compaction attempts to copy corrupted data
-2. Copy fails (segments unreadable)
-3. Cleanup phase **permanently deletes** the corrupted segments
-4. **Result**: Segments are now unrecoverable (not just corrupted, but gone)
+1. Compaction reads head and every checkpoint
+2. If it hits a missing segment, the run **aborts** and fixes nothing (only the half-written new generation is reclaimed)
+3. If the damage is only in older revisions, compaction **succeeds** and cleanup **permanently deletes** the older generations
+4. **Result**: the good revisions you could have rolled back to with `recover-journal` are gone
+
+See [Compaction and Corruption](/recovery/compaction#compaction-and-corruption).
 :::
 
 | Scenario | Tail Compaction Risk | Full Compaction Risk |
@@ -324,31 +341,31 @@ If corruption exists **before** compaction runs:
 
 **The Question**: "I deleted 100GB on Tuesday. When does disk space come back?"
 
-**The Answer**: It depends on compaction strategy and revision retention.
+**The Answer**: It depends on compaction strategy and the 2 retained GC generations.
 
 ### Timeline Example
 
 ```
 Monday 9:00 AM:   Delete page → Disk: 0GB freed
-                  (segments still referenced by old revisions)
+                  (old segments still hold the content)
 
-Tuesday 9:00 AM:  Revision expires (24h default) → Disk: 0GB freed
-                  (segments eligible for GC, but not deleted yet)
+Tuesday 2:00 AM:  GC #1: compaction writes a new generation without it → Disk grows
+                  (cleanup keeps the previous generation: 2 are retained)
 
-Wednesday 2:00 AM: Compaction runs → Disk: -100GB (grows!)
-                   (new generation created, old still exists)
+Wednesday 2:00 AM: GC #2: compaction → next generation
+                   Cleanup reclaims the generation holding the deleted content
+                   → Disk: +100GB freed (files removed by the file reaper)
 
-Wednesday 3:00 AM: Cleanup completes → Disk: +100GB freed
-                   (old generation deleted)
-
-Total time: ~42 hours
+Total time: two successful GC cycles (~41 hours with a daily 2 AM run)
+(Each run happens only if the estimation phase doesn't skip it - growth must
+ exceed compaction.sizeDeltaEstimation, default 1 GiB)
 ```
 
 ### Why Space Might NEVER Be Reclaimed
 
-- ❌ Only tail compaction scheduled (never touches old segments)
+- ❌ Only tail compaction scheduled (never rewrites the base from the last full compaction)
 - ❌ Compaction disabled (common after incidents, then forgotten)
-- ❌ Revision retention set too high
+- ❌ Stale checkpoints (compacted along with HEAD, they keep old content alive)
 - ❌ DataStore GC never scheduled (binaries accumulate)
 
 ### Best Practices

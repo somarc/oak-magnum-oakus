@@ -17,7 +17,7 @@ flowchart TD
     NO_BACKUP --> IDENTIFY{What repository<br/>type?}
     
     IDENTIFY -->|SegmentStore| CHECK_SEG[Run: oak-run check]
-    IDENTIFY -->|DocumentNodeStore| CHECK_DOC[Run: oak-run check<br/>Different commands!]
+    IDENTIFY -->|DocumentNodeStore| CHECK_DOC[Out of scope:<br/>oak-run check is SegmentStore-only]
     IDENTIFY -->|Don't know| IDENTIFY_HELP[See: Identify Repo Type]
     
     CHECK_SEG --> CHECK_RESULT{Check result?}
@@ -75,7 +75,7 @@ flowchart TD
 **DocumentNodeStore (MongoDB/RDB)**:
 - Used for AEM clustering
 - Config file in `crx-quickstart/install/`
-- Different recovery procedures
+- Different recovery procedures (`oak-run recovery`; `check`/`recover-journal` are SegmentStore-only) — out of scope for this guide
 
 ### 3. Check Results
 

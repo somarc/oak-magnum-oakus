@@ -1,7 +1,7 @@
 # 🔍 oak-run check
 
 ::: info 🎯 Scope
-SegmentStore (TarMK) • Oak 1.22+  
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
 **Not for AEMaaCS**
 :::
 
@@ -12,7 +12,7 @@ The `check` command performs a consistency check on a SegmentStore (TarMK) repos
 ```
 SegmentNotFoundException: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
 TarMK refuses to start after unclean shutdown
-IllegalStateException: Segment xyz not found in tar file
+Unable to access revision 0a1b2c3d-4e5f-6789-abcd-ef0123456789:261920, rewinding...
 Repository won't open after disk full event
 ```
 
@@ -31,13 +31,28 @@ Repository won't open after disk full event
 $ java -jar oak-run-*.jar check [options] /path/to/segmentstore
 ```
 
+| Option | Meaning |
+|--------|---------|
+| `--bin` | Also read binary properties (segment blobs only) |
+| `--head` | Check only the head, no checkpoints |
+| `--checkpoints [a,b,…]` | Check only these checkpoints (default `all`); without `--head`, head is then skipped |
+| `--filter /p1,/p2` | Content paths to check (default `/` = the whole tree) |
+| `--last [n]` | Check only the newest *n* journal revisions (`--last` alone = 1); default is no limit |
+| `--journal <file>` | Use another journal file (default `<segmentstore>/journal.log`) |
+| `--notify <sec>` | Print `Traversing …` progress every *sec* seconds (default: never) |
+| `--io-stats` | Print segment-read I/O statistics at the end |
+| `--mmap [true\|false]` | Memory-map tar files (default `true`) |
+| `--fail-fast [true\|false]` | Stop at the first inconsistent revision; success then needs head **and** all checkpoints *(since Oak 1.66 — not in AEM 6.5; see [which LTS SP has which Oak](/reference/oak-versions))* |
+
+Exit code: `0` if a good revision was found, `1` if not (or if the store cannot be opened).
+
 ## What Check Does
 
 The consistency check answers a fundamental question: **"What is the most recent revision where the repository (root + checkpoints) is fully accessible?"**
 
 ### The Algorithm
 
-1. **Iterates through journal.log entries** (newest to oldest by default)
+1. **Iterates through journal.log entries** (newest to oldest)
 2. **Sets the FileStore to each revision** in sequence
 3. **Tests accessibility** by attempting to:
    - Deserialize the root node state
@@ -66,25 +81,29 @@ A revision is considered consistent if the check can:
 ### What It Does NOT Test
 
 - ❌ DataStore blob accessibility (see `isExternal()` check in code)
-- ❌ Every single node in the repository (only specified paths + root)
+- ❌ Nodes outside the `--filter` paths (default `/` = the whole head and checkpoint trees), or anything after the first error in each path
 - ❌ Content-level corruption (only segment-level)
 
 ## Example Output
 
 ```
-Searching through revisions...
-Searched through 247 revisions and 3 checkpoints
+Checking revision 28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920
+...                      (per-revision "Checking …" / "Checked N nodes and M properties" lines)
+
+Searched through 247 revisions and 1 checkpoints
 
 Head
-Latest good revision for path / is 28c7e87c-1379-4ebb-94c7-0d0372b30a05 from 2025-10-03 10:23:45
+Latest good revision for path / is 28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 from Oct 3, 2025, 10:23:45 AM
 
 Checkpoints
 - 59e3b73e-9c3c-45e3-b6d9-156d7a6e5c52
-  Latest good revision for path / is 28c7e87c-1379-4ebb-94c7-0d0372b30a05 from 2025-10-03 10:23:45
+  Latest good revision for path / is 28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 from Oct 3, 2025, 10:23:45 AM
 
 Overall
-Latest good revision for paths and checkpoints checked is 28c7e87c-1379-4ebb-94c7-0d0372b30a05 from 2025-10-03 10:23:45
+Latest good revision for paths and checkpoints checked is 28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 from Oct 3, 2025, 10:23:45 AM
 ```
+
+Revisions are journal record IDs (`<segment-uuid>:<offset>`); the timestamp format follows the JVM's default locale.
 
 ## 🚨 CRITICAL: "Bricked" vs "Recoverable" Distinction
 
@@ -95,14 +114,10 @@ Latest good revision for paths and checkpoints checked is 28c7e87c-1379-4ebb-94c
 ```bash
 $ java -jar oak-run-*.jar check /path/to/segmentstore
 
-Searching through revisions...
+...
+
 Searched through 247 revisions and 3 checkpoints
-
-Head
-Latest good revision for path / is none from unknown time
-
-Overall
-No good revision found  # ← Check completed, but everything is corrupted
+No good revision found  # ← Check completed, but everything is corrupted (exit code 1)
 ```
 
 **What this means:**
@@ -124,12 +139,10 @@ No good revision found  # ← Check completed, but everything is corrupted
 ```bash
 $ java -jar oak-run-*.jar check /path/to/segmentstore
 
-Exception in thread "main" org.apache.jackrabbit.oak.segment.SegmentNotFoundException: 
-Segment abc123def456 not found
-    at org.apache.jackrabbit.oak.segment.file.FileStore.readSegment(FileStore.java:513)
-    at org.apache.jackrabbit.oak.segment.file.FileStore.<init>(FileStore.java:169)
+org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
+    at org.apache.jackrabbit.oak.segment.file.ReadOnlyFileStore.readSegment(...)
     ...
-# Check failed to even initialize the FileStore
+# Check failed before it could search the journal (stack trace on stderr, exit code 1)
 ```
 
 **OR:**
@@ -137,8 +150,8 @@ Segment abc123def456 not found
 ```bash
 $ java -jar oak-run-*.jar check /path/to/segmentstore
 
-java.io.IOException: Failed to open tar file data00005a.tar
-    at org.apache.jackrabbit.oak.segment.file.tar.TarReader.open(TarReader.java:111)
+java.io.IOException: Failed to open tar file data00005a.tar.ro.bak
+    at org.apache.jackrabbit.oak.segment.file.tar.TarReader.openRO(...)
     ...
 # Critical tar files are corrupted or missing
 ```
@@ -168,14 +181,14 @@ java.io.IOException: Failed to open tar file data00005a.tar
 java -jar oak-run-*.jar check /path/to/segmentstore
 
 # Look for segment graph integrity:
-✅ "Searched through X revisions and Y checkpoints"
 ✅ "Checked X nodes and Y properties"
-✅ "No errors found"
+✅ "Path / is consistent"
+✅ "Latest good revision for paths and checkpoints checked is …"
 → Segment graph is INTACT → Repository is RECOVERABLE
 
 # Fatal indicators:
 ❌ "SegmentNotFoundException: Segment X not found"
-❌ "Revision X not found"
+❌ "Error while traversing /path: …" / "Skipping invalid record id …"
 ❌ Cannot traverse segment graph
 → Segment references are BROKEN → Repository is BRICKED
 ```
@@ -216,9 +229,13 @@ A repository is only truly unrecoverable when:
 |--------------|----------------|-------------------|
 | **Good revision found** ✅ | Repo is recoverable | **Option A**: Journal rollback (fast, loses recent changes)<br>**Option B**: Surgical removal with `count-nodes` + `remove-nodes` (slower, preserves more) |
 | **No good revision found** ❌ | Segment-level corruption | **Last resort**: `oak-upgrade` sidegrade to extract what you can |
-| **Check itself fails** 💥 | Repository is "bricked" | Likely caused by compaction over undiagnosed corruption; restore from backup |
+| **Check itself fails** 💥 | Repository is "bricked" | Storage-level damage (store cannot be opened); restore from backup |
 
 ## Check vs. Count-Nodes: Different Tools, Different Jobs
+
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes` and `:remove-nodes` are not part of Apache Jackrabbit Oak (any version). They come from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
+:::
 
 | Aspect | `oak-run check` | `:count-nodes` |
 |--------|-----------------|----------------|
@@ -238,7 +255,7 @@ A repository is only truly unrecoverable when:
 $ java -jar oak-run-*.jar check /path/to/segmentstore
 
 # Scenario A: Good revision found ✅
-# Output: "Latest good revision for paths and checkpoints checked is abc123 from 2025-10-03"
+# Output: "Latest good revision for paths and checkpoints checked is abc123…:261920 from Oct 3, 2025, …"
 # → Repo is recoverable!
 
 ## Option A1: Rollback approach (fastest, safest, loses recent changes)
@@ -251,10 +268,12 @@ $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 # → CRITICAL: Review the log file output BEFORE proceeding!
 # → Check for critical paths (/oak:index/uuid, /jcr:system, /rep:security)
 # → If critical paths are corrupted, surgical removal will NOT work
-> :remove-nodes /tmp/count-nodes-snfe-*.log dry-run
+> :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log dry-run
 # → ALWAYS dry-run first to validate what will be deleted
-> :remove-nodes /tmp/count-nodes-snfe-*.log
+> :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log
 # → Only run actual removal after validating dry-run results
+# → remove-nodes never deletes "Missing segment" lines (only missing-blob lines);
+#   remove those paths one by one with :remove-node <path> (drop the trailing /)
 
 # Scenario B: No good revision found ❌
 # Output: "No good revision found"
@@ -267,21 +286,25 @@ $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 **NEVER run compaction on a repository with undiagnosed corruption.** Here's why:
 
 ```
-Timeline of Death:
+What actually happens (same in Oak 1.22 and 2.4):
 1. Repository has missing segment XYZ (undiagnosed)
 2. Compaction runs
-3. Compaction rewrites segments, creating new references
-4. Compaction cleanup deletes old tar files
-5. Old references to segment XYZ are now lost
-6. Even journal rollback can't help - the old segments are gone
-7. Repository is "bricked" - can't access head, can't roll back
+3a. XYZ is reachable from head or a checkpoint:
+    → SegmentNotFoundException → "TarMK GC #N: compaction encountered an error"
+    → the run is aborted; old tar files stay (online cleanup removes only the half-written generation)
+    → offline `compact` prints "Compaction cancelled after …" (exit 1), no cleanup, journal.log untouched
+    → nothing fixed; time and disk spent; every later run fails the same way
+3b. XYZ is reachable only from OLDER revisions:
+    → compaction succeeds; cleanup deletes the older generations
+      (online keeps 2 generations by default, offline keeps 1)
+    → offline `compact` also rewrites journal.log to a single entry
+    → the older revisions you could have rolled back to are gone
 ```
 
 **Why compaction is dangerous with undiagnosed corruption:**
-- Compaction **rewrites the segment graph** by copying reachable segments
-- If you compact over a missing segment, you **bake the corruption in**
-- Old tar files (which might have alternate paths around corruption) are **deleted**
-- You lose the ability to roll back past the compaction point
+- Compaction does **not** skip unreadable content - an SNFE in head or a checkpoint aborts the run
+- A **successful** compaction + cleanup deletes old generations, so you lose the ability to roll back past the compaction point
+- Compaction never reads external DataStore binaries (it copies only their IDs), so missing DataStore blobs survive it unnoticed
 
 ## Time Estimates
 
@@ -296,7 +319,7 @@ Timeline of Death:
 | 3 TB+ | ~6-8 hours |
 
 ::: warning ⚠️ Time Estimates Scale With Repository Size
-These times are **I/O bound** and scale with repository size. `check` is faster than most operations because it stops early when corruption is found - but on a healthy repository, it must traverse all journal entries.
+These times are **I/O bound** and scale with repository size. `check` stops at the newest revision where every checked path is consistent - on a healthy repository that is the first revision, but it still traverses the full `--filter` tree (default `/`) of head and every checkpoint. On a corrupted repository it keeps walking back through journal entries until it finds a good one (or runs out).
 
 **Production reality**: On-premise AEM installations commonly have **500GB-2TB** segment stores. Even the diagnostic `check` command can take hours on large repositories.
 :::

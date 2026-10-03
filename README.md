@@ -1,6 +1,8 @@
 # 🌳 The Magnum OAKus
 
 > **Production-grade recovery procedures for Apache Oak SegmentStore (TarMK)**
+>
+> Verified against **Oak 1.22.x** (AEM 6.5) and **Oak 2.4.0** (AEM 6.5 LTS SP3). Not for AEMaaCS or DocumentNodeStore.
 
 [![Deploy to GitHub Pages](https://github.com/somarc/oak-magnum-oakus/actions/workflows/deploy.yml/badge.svg)](https://github.com/somarc/oak-magnum-oakus/actions/workflows/deploy.yml)
 
@@ -18,6 +20,7 @@ The definitive guide to Apache Oak repository maintenance, corruption recovery, 
 - 📋 **Checkpoints** - Understanding and managing Oak checkpoints
 - 💾 **DataStore** - Consistency checks and garbage collection
 - 📚 **Reference** - Complete command reference and troubleshooting
+- 🎯 **[Oak Version Scope](https://somarc.github.io/oak-magnum-oakus/reference/oak-versions)** - Which Oak your AEM runs, and which oak-run to use
 
 ## Why "Magnum OAKus"?
 
@@ -31,7 +34,7 @@ This is the guide we wish existed when we first faced repository corruption.
 
 1. **STOP** - Don't run any commands yet
 2. **READ** - [Crisis Checklist](https://somarc.github.io/oak-magnum-oakus/crisis/)
-3. **IDENTIFY** - What type of repository do you have?
+3. **IDENTIFY** - What type of repository, and which [Oak version](https://somarc.github.io/oak-magnum-oakus/reference/oak-versions), do you have?
 4. **DIAGNOSE** - Run `oak-run check` first
 5. **RECOVER** - Follow the decision tree
 

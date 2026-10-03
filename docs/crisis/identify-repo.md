@@ -36,7 +36,7 @@ crx-quickstart/repository/
 │   ├── data00002a.tar
 │   ├── journal.log         ← Commit history
 │   ├── repo.lock           ← Process lock
-│   └── manifest            ← TAR manifest
+│   └── manifest            ← Store version (store.version)
 ├── datastore/              ← Binary storage (optional)
 └── index/                  ← Lucene indexes
 ```
@@ -66,12 +66,11 @@ crx-quickstart/install/
 
 | Command | Purpose |
 |---------|---------|
-| `oak-run check` | Diagnose (different flags) |
 | `oak-run recovery` | NOT recover-journal! |
 | `oak-run console` | Interactive shell |
 
 ::: warning ⚠️ Important
-**DO NOT** use `recover-journal` on DocumentNodeStore - it's for SegmentStore only!
+**DO NOT** use `recover-journal` or `check` on DocumentNodeStore - they're for SegmentStore only! DocumentNodeStore recovery is out of scope for this guide.
 :::
 
 ## DocumentNodeStore (RDB)
@@ -83,7 +82,7 @@ crx-quickstart/install/
 ```
 crx-quickstart/install/
 ├── org.apache.jackrabbit.oak.plugins.document.DocumentNodeStoreService.config
-│   └── Contains: ds.type=RDB, jdbc connection string
+│   └── Contains: documentStoreType=RDB (JDBC URL lives in a separate DataSource config, datasource.name=oak)
 ```
 
 ## Hybrid Configurations

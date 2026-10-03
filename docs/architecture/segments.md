@@ -9,7 +9,7 @@ A segment is a self-contained block of repository data with these properties:
 | Property | Value | Why It Matters |
 |----------|-------|----------------|
 | **Size** | Up to 256 KiB | Cache-friendly, efficient I/O |
-| **ID** | UUID (e.g., `a1b2c3d4-...`) | Unique identifier for lookups |
+| **ID** | UUID (e.g., `a1b2c3d4-...`) | Unique identifier for lookups; the top 4 bits of the UUID's low half mark a **data** (`0xA`) vs. **bulk**/binary-only (`0xB`) segment |
 | **Immutable** | Once written, never changed | Fast reads, but can't repair corruption |
 | **Location** | Inside TAR files | Sequential storage for efficiency |
 
@@ -24,24 +24,24 @@ Contents:
   ├── Node Record: /content/dam/2024/report.pdf
   │   ├── jcr:primaryType = dam:Asset
   │   └── jcr:created = 2024-10-01T10:30:00
-  ├── Property Records
+  ├── Value Records (property values)
   │   ├── dc:title = "Q3 Financial Report"
   │   └── dam:size = 2457600
-  ├── Blob Reference → DataStore: abc123def456
-  └── Template Record (shared node type definition)
+  ├── Blob ID Record → DataStore: abc123def456
+  └── Template Record (shared node shape: type, mixins, property names)
 ```
 
 ### Record Types
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| **Node Record** | JCR node structure | `/content/dam/myasset` |
-| **Property Record** | Node properties | `jcr:title="My Doc"` |
-| **Value Record** | Property values | Strings, numbers, dates |
-| **Blob Reference** | Pointer to DataStore | Large binary content |
-| **List Record** | Multi-value properties | Tags, categories |
-| **Map Record** | Large property sets | Efficient storage |
-| **Template Record** | Node type definitions | Deduplication |
+| **Node Record** (`NODE`) | JCR node structure: template id, child node(s), property value ids | `/content/dam/myasset` |
+| **Value Record** (`VALUE`) | Property values (property names/types are in the template) | `jcr:title="My Doc"`, numbers, dates |
+| **Block Record** (`BLOCK`) | Raw chunks of binaries/long strings kept in the segment store | Inlined small binaries |
+| **Blob ID Record** (`BLOB_ID`) | Pointer to DataStore | Large binary content |
+| **List / Bucket Record** (`LIST`, `BUCKET`) | Multi-value properties, lists of record ids | Tags, categories |
+| **Map Record** (`LEAF`, `BRANCH`) | Child node entries (name → node), as a hash tree | Folders with many children |
+| **Template Record** (`TEMPLATE`) | Node "shape": primary type, mixins, property names and types | Deduplication |
 
 ## Segment References (The Graph)
 
@@ -99,14 +99,14 @@ stateDiagram-v2
 
 ## Viewing Segments
 
-Use `oak-run explore` to inspect segments:
+Use `oak-run debug` (command line, opens the store read-only) or `oak-run explore` (Swing GUI, needs a display) to inspect segments:
 
 ```bash
-$ java -jar oak-run-*.jar explore /path/to/segmentstore
+# Dump one (or more) segments by UUID
+$ java -jar oak-run-*.jar debug /path/to/segmentstore <segment-uuid>
 
-# In the explorer:
-> segment <uuid>
-> info
+# GUI: browse the tree; menus "Segment Refs", "Tar File Info", "Time Machine"
+$ java -jar oak-run-*.jar explore /path/to/segmentstore
 ```
 
 ## Key Takeaways

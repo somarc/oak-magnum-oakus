@@ -57,11 +57,16 @@ java -jar oak-run.jar tika \
     --generate
 ```
 
+Use the oak-run release that matches your Oak version (`oak-run-1.22.x.jar` on AEM 6.5, `oak-run-2.4.0.jar` on AEM 6.5 LTS SP3, Java 17+) — see [which LTS SP has which Oak](/reference/oak-versions). `--data-file` defaults to `oak-binary-stats.csv`; `--path` (default `/`) limits the scan to a subtree.
+
 ### Output: `binary-stats.csv`
 
+Columns: blob id, length, `jcr:mimeType`, `jcr:encoding`, path. The first line is always the header (Oak 1.22.x and 2.4.0 alike). Keep it if you split or filter the file.
+
 ```csv
-43844ed22d640a114134e5a25550244e8836c00c#28705,28705,"application/pdf",,"/content/dam/reports/Q3-2024.pdf/jcr:content/renditions/original/jcr:content"
-a1b2c3d4e5f6...#12345,12345,"image/jpeg",,"/content/dam/images/hero.jpg/jcr:content/renditions/original/jcr:content"
+blobId,length,jcr:mimeType,jcr:encoding,jcr:path
+43844ed22d640a114134e5a25550244e8836c00c#28705,28705,application/pdf,,/content/dam/reports/Q3-2024.pdf/jcr:content/renditions/original/jcr:content
+a1b2c3d4e5f6...#12345,12345,image/jpeg,,/content/dam/images/hero.jpg/jcr:content/renditions/original/jcr:content
 ```
 
 ::: tip 💡 Timing
@@ -75,16 +80,17 @@ You have **two options** for populating the pre-extracted text store:
 ### Option A: Fresh Extraction with Tika (Most Common)
 
 ```bash
-java -cp oak-run.jar:tika-app-1.15.jar \
+java -cp oak-run.jar:tika-app-1.28.5.jar \
     org.apache.jackrabbit.oak.run.Main tika \
     --data-file binary-stats.csv \
     --store-path ./store \
     --fds-path /path/to/datastore \
-    extract
+    --extract
 ```
 
 **Key points:**
-- Downloads [tika-app](https://tika.apache.org/download.html) separately
+- Downloads [tika-app](https://tika.apache.org/download.html) separately — oak-run bundles only `tika-core`/`tika-parsers` without their parser dependencies. Oak 1.22.24 and 2.4.0 are both built against Tika 1.28.5, so use that tika-app version (the Oak docs' `tika-app-1.15` example dates from Oak 1.7)
+- Optional: `--pool-size <n>` (default: number of cores), `--tika-config <file>`
 - Uses `-cp` not `-jar` (classpath includes both JARs)
 - Can run on a **different machine** with more CPU cores
 - **Incremental** - re-running skips already-processed binaries
@@ -94,18 +100,18 @@ java -cp oak-run.jar:tika-app-1.15.jar \
 If you have a healthy Lucene index dump (e.g., from before corruption):
 
 ```bash
-# First, dump the existing index
+# First, dump the existing index (--index-dump takes no value; output goes to --index-out-dir, default ./indexing-result)
 java -jar oak-run.jar index \
     --fds-path /path/to/datastore \
     /path/to/segmentstore \
-    --index-dump /path/to/dump
+    --index-dump --index-out-dir /path/to/dump
 
 # Then populate from the dump
 java -jar oak-run.jar tika \
     --data-file binary-stats.csv \
     --store-path ./store \
     --index-dir /path/to/dump/index-dumps/damAssetLucene/data \
-    populate
+    --populate
 ```
 
 ::: warning ⚠️ Index Dump Consistency
@@ -120,13 +126,17 @@ After extraction, the `./store` directory contains:
 ./store/
 ├── 43/
 │   └── 84/
-│       └── 43844ed22d640a114134e5a25550244e8836c00c#28705.txt
+│       └── 4e/
+│           └── 43844ed22d640a114134e5a25550244e8836c00c
 ├── a1/
 │   └── b2/
-│       └── a1b2c3d4e5f6...#12345.txt
+│       └── c3/
+│           └── a1b2c3d4e5f6...
 ├── blobs_error.txt    # Binaries that failed extraction
 └── blobs_empty.txt    # Binaries with no extractable text
 ```
+
+Text files use the FileDataStore layout: three 2-character directory levels, file name = blob id without the `#length` suffix and without an extension.
 
 ## Phase 3: Configure AEM to Use Pre-extracted Text
 
@@ -136,14 +146,14 @@ In AEM, configure **Apache Jackrabbit Oak DataStore PreExtractedTextProvider**:
 
 | Property | Value |
 |----------|-------|
-| `path` | `/path/to/store` |
+| `dir` (label "Path") | `/path/to/store` |
 
 Or via OSGi config file:
 
 ```json
 {
-  "org.apache.jackrabbit.oak.plugins.index.lucene.PreExtractedTextProviderImpl": {
-    "path": "/path/to/store"
+  "org.apache.jackrabbit.oak.plugins.blob.datastore.DataStoreTextProviderService": {
+    "dir": "/path/to/store"
   }
 }
 ```
@@ -160,16 +170,18 @@ java -jar oak-run.jar index \
     --reindex --index-paths=/oak:index/damAssetLucene
 ```
 
+Without `--read-write` the store is opened read-only: the new index files land in `--index-out-dir` (default `./indexing-result`) and must be imported via `IndexerMBean#importIndex` (or `--index-import --index-import-dir <dir>`). Add `--read-write` (AEM stopped) to reindex and import in one go.
+
 ## Verification
 
-Check `TextExtractionStatsMBean` in JMX to verify pre-extraction is working:
+Check the `TextExtractionStats` MBean (`TextExtractionStatsMBean`) in JMX to verify pre-extraction is working:
 
 | Metric | Expected |
 |--------|----------|
 | `PreExtractedTextProviderConfigured` | `true` |
-| `PreExtractedTextHits` | Increasing during reindex |
-| `PreExtractedTextMisses` | Low (only new binaries) |
-| `ExtractionTime` | Near zero (using cached text) |
+| `PreFetchedCount` | Increasing during reindex (text served from the store) |
+| `TextExtractionCount` | Low (only binaries missing from the store) |
+| `TotalTime` | Low (little live Tika extraction) |
 
 ## When to Use Pre-Text Extraction
 
@@ -186,7 +198,7 @@ Check `TextExtractionStatsMBean` in JMX to verify pre-extraction is working:
 ### "No pre-extracted text found"
 
 1. Check `path` in OSGi config matches actual store location
-2. Verify file naming: `{blobId}.txt` format
+2. Verify file naming: `xx/yy/zz/{blobId without #length}` (no extension)
 3. Check `blobs_error.txt` for extraction failures
 
 ### Extraction Errors
@@ -217,6 +229,6 @@ Common causes in `blobs_error.txt`:
 2. **Phase 2 can run on a separate machine** - parallelize for speed
 3. **Incremental** - re-running skips already-processed binaries
 4. **Option B (index dump)** is fastest if you have a healthy index backup
-5. **Verify with JMX** - `TextExtractionStatsMBean` shows hit rate
+5. **Verify with JMX** - `TextExtractionStats` MBean (`PreFetchedCount`) shows pre-extracted hits
 6. **Plan ahead** - Generate CSV and extract text BEFORE you need to reindex
 :::

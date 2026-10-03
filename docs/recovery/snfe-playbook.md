@@ -1,7 +1,7 @@
 # 🚨 SegmentNotFoundException Playbook
 
 ::: info 🎯 Scope
-SegmentStore (TarMK) • Oak 1.22+  
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
 **Not for AEMaaCS**
 :::
 
@@ -13,7 +13,7 @@ The `SegmentNotFoundException` (SNFE) is the most common and most feared error i
 org.apache.jackrabbit.oak.segment.SegmentNotFoundException: 
   Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
 
-java.lang.IllegalStateException: Segment not found: 0a1b2c3d-...
+*ERROR* [...] org.apache.jackrabbit.oak.segment.SegmentNotFoundExceptionListener Segment not found: 0a1b2c3d-4e5f-6789-abcd-ef0123456789. SegmentId age=123456ms
 
 TarMK refuses to start: SegmentNotFoundException during initialization
 
@@ -47,7 +47,7 @@ flowchart TD
 | **Startup SNFE** | Corrupted HEAD revision | [Journal Recovery](/recovery/journal) or [Sidegrade](/recovery/sidegrade) |
 | **Runtime SNFE** | Specific path corrupted | [Surgical Removal](/recovery/surgical) |
 | **Compaction SNFE** | GC hit corruption | **STOP compaction immediately** |
-| **Intermittent SNFE** | Long-lived sessions + tail GC | [GC Configuration](/architecture/gc#-critical-long-lived-sessions--tail-compaction--segmentnotfoundexception) |
+| **Intermittent SNFE** | Long-lived sessions + tail GC | [GC Configuration](/architecture/gc#long-lived-sessions-tail-compaction) |
 | **Check SNFE** | Repository bricked | Restore from backup |
 
 ## Step 1: Stop and Assess
@@ -78,9 +78,8 @@ No good revision found
 
 **Scenario C: Check itself fails with SNFE** ❌
 ```
-Exception in thread "main" org.apache.jackrabbit.oak.segment.SegmentNotFoundException:
-Segment abc123def456 not found
-    at org.apache.jackrabbit.oak.segment.file.FileStore.readSegment(FileStore.java:513)
+org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
+    at org.apache.jackrabbit.oak.segment.file.ReadOnlyFileStore.readSegment(ReadOnlyFileStore.java:...)
 ```
 → **Unrecoverable** — Restore from backup. No Oak tools can help.
 
@@ -94,7 +93,7 @@ Segment abc123def456 not found
 java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 ```
 
-**What it does**: Rolls back to the last good revision in journal.log.
+**What it does**: Rebuilds `journal.log` from the root records found in the TAR files, dropping the newest revisions whose head or checkpoints are corrupted, so the last good revision becomes HEAD. The old journal is kept as `journal.log.bak.NNN`.
 
 **Data loss**: Changes since the good revision timestamp.
 
@@ -102,15 +101,22 @@ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 
 **When to use**: Check found a good revision, but you want to keep recent changes and only remove corrupted paths.
 
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes`, `:remove-nodes` and `:remove-node` are not part of Apache Jackrabbit Oak (any version). They come from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
+:::
+
 ```bash
 # Find corrupted paths
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
-# Review /tmp/count-nodes-snfe-*.log
+# Review ./count-nodes-snfe-yyyyMMdd-HHmmss.log (written to the current directory)
 
-# Remove corrupted paths (dry-run first!)
-> :remove-nodes /tmp/count-nodes-snfe-*.log dry-run
-> :remove-nodes /tmp/count-nodes-snfe-*.log
+# Missing-segment paths: remove one by one (no dry-run; drop the trailing "/")
+> :remove-node /content/dam/2024/Q3
+
+# Missing-blob lines: remove-nodes (dry-run first!, exact file name, no wildcard)
+> :remove-nodes count-nodes-snfe-20240111-093500.log dry-run
+> :remove-nodes count-nodes-snfe-20240111-093500.log
 > :exit
 
 # Verify
@@ -119,16 +125,19 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 
 **Data loss**: Only the corrupted paths.
 
+`:remove-nodes` never deletes `Warning: Missing segment at …` lines — it only counts them as `[WARN]`. See [Surgical Removal](/recovery/surgical).
+
 ### Path C: Sidegrade (Last Resort)
 
 **When to use**: No good revision found, but check can still run.
 
 ```bash
-java -jar oak-upgrade-*.jar upgrade --copy-binaries \
-    /path/to/corrupted /path/to/new-repo
+# positional args = repository dirs that contain segmentstore/
+java -jar oak-upgrade-<oak-version>.jar \
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
 
-**Data loss**: Unknown — whatever can't be read is lost.
+**Data loss**: Unknown — the sidegrade aborts on the first unreadable node, so known-corrupt paths must be left out with `--exclude-paths`. See [Sidegrade](/recovery/sidegrade).
 
 ### Path D: Restore from Backup
 
@@ -177,14 +186,14 @@ df -h /path/to/segmentstore
 **Diagnosis**:
 ```bash
 # Check if SNFE correlates with compaction
-grep "Tail compaction" error.log
+grep "running tail compaction" error.log
 grep "SegmentNotFoundException" error.log
 # Compare timestamps
 ```
 
-**Recovery**: This is a **race condition**, not corruption. See [GC documentation](/architecture/gc#-critical-long-lived-sessions--tail-compaction--segmentnotfoundexception).
+**Recovery**: This is a **race condition**, not corruption. See [GC documentation](/architecture/gc#long-lived-sessions-tail-compaction).
 
-**Prevention**: Increase `revisionGcMaxAgeInSecs` or fix long-lived sessions in application code.
+**Prevention**: Increase `compaction.retainedGenerations` (default `2`, PID `org.apache.jackrabbit.oak.segment.SegmentNodeStoreService`) or fix long-lived sessions in application code.
 
 ### Scenario 4: Compaction Over Corruption
 
@@ -248,11 +257,11 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 1. **SNFE is a symptom, not a diagnosis** — Find the root cause
 2. **Check before anything else** — Determines your recovery options
 3. **Backup is always safest** — If you have one, use it
-4. **Never compact corruption** — Makes it permanent
+4. **Never compact corruption** — It fixes nothing, and a successful run deletes the older revisions you could roll back to
 5. **Intermittent SNFE ≠ corruption** — May be GC race condition
 6. **"0 missing blobs" can still fail** — See [Checkpoint Advancement](/checkpoints/checkpoint-advancement)
 :::
 
 ::: info 📅 Last Updated
-Content last reviewed: January 2026 • Oak 1.22.x / AEM 6.5.x (also applicable to AEM 6.5 LTS)
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

@@ -28,27 +28,29 @@ ls crx-quickstart/install/*DocumentNodeStoreService*.config
 |-----------|---------|-------|
 | **Diagnose** | `oak-run check /path/to/segmentstore` | Always run first |
 | **Rebuild journal** | `oak-run recover-journal /path/to/segmentstore` | Safe, non-destructive |
-| **Find corruption** | `:count-nodes` in console | ⚠️ somarc fork only |
-| **Remove bad nodes** | `:remove-nodes <logfile> dry-run` | ⚠️ somarc fork only |
-| **Extract content** | `oak-upgrade --copy-binaries src dst` | Last resort sidegrade |
+| **Find corruption** | `:count-nodes` in console | ⚠️ fork only; log in current dir |
+| **Remove bad nodes** | `:remove-nodes <logfile> dry-run` | ⚠️ fork only; never deletes `Missing segment` lines |
+| **Extract content** | `oak-upgrade --exclude-paths=<bad> <src-repo-dir> <dst-repo-dir>` | Last resort [sidegrade](/recovery/sidegrade); aborts on any unreadable node |
 
-::: warning ⚠️ somarc Fork Commands
-`:count-nodes` and `:remove-nodes` require [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak). Not in upstream Apache Oak.
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes` and `:remove-nodes` are not part of Apache Jackrabbit Oak (any version). They come from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
 :::
+
+`oak-run` = the release matching your Oak version: `oak-run-1.22.x.jar` for AEM 6.5; for AEM 6.5 LTS the oak-run equal to your oak-core version (`oak-run-2.4.0.jar` on SP3, Java 17+) — see [which LTS SP has which Oak](/reference/oak-versions).
 
 ## ⚠️ NEVER Do These
 
 | ❌ DON'T | Why |
 |----------|-----|
 | Run `compact` before `check` | Deletes segments you might need |
-| Run `compact` if check shows errors | Makes corruption permanent |
+| Run `compact` if check shows errors | Fixes nothing; a successful run deletes the older revisions you could roll back to |
 | Remove `/oak:index/uuid` or `/jcr:system` | Bricks the repository |
 | Skip dry-run before remove-nodes | No undo! |
 
 ## 🕐 Time Estimates
 
 ::: danger ⚠️ CRITICAL: Time Scales With Size
-All oak-run operations are **I/O bound** and must traverse the entire segment store. There is no way to parallelize or speed up these operations.
+All oak-run operations are **I/O bound** and must traverse the entire segment store. There is no way to parallelize or speed up these operations (exception: offline `compact --threads N` *(since Oak 1.58 — not in AEM 6.5)*).
 
 **First**: Know your repository size:
 ```bash

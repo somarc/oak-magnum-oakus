@@ -63,13 +63,15 @@ A segment is the **atomic unit of storage** in Oak Segment Tar:
 
 **What's Inside a Segment:**
 
-- **Node Records** - JCR node structure
-- **Property Records** - Node property values
+- **Node Records** - JCR node structure (template + child nodes + property values)
 - **Value Records** - Property values (strings, numbers, dates)
-- **Blob References** - Pointers to external binaries
-- **List Records** - Multi-value properties
-- **Map Records** - Large property sets
-- **Template Records** - Shared node type definitions
+- **Block Records** - Raw chunks of binaries/long strings stored in the segment store
+- **Blob ID Records** - Pointers to external binaries (DataStore)
+- **List / Bucket Records** - Multi-value properties and lists of record ids
+- **Map Records** (Leaf/Branch) - Child node entries (name → node)
+- **Template Records** - Shared node "shape": primary type, mixins, property names and types
+
+There is no separate "property record": property names/types live in the template, values hang off the node record (`RecordType`: `LEAF`, `BRANCH`, `BUCKET`, `LIST`, `VALUE`, `BLOCK`, `TEMPLATE`, `NODE`, `BLOB_ID`).
 
 ### Why 256KiB?
 
@@ -123,7 +125,7 @@ If Segment C is corrupted/missing:
 ```
 1. WRITE:    Content changes → New segment created → Written to TAR
 2. READ:     Repository access → Segment UUID lookup → Read from TAR
-3. COMPACT:  GC runs → Live segments copied to new generation → Old deleted
+3. COMPACT:  GC runs → Live content (head + checkpoints) rewritten into new-generation segments → Old generations reclaimed by cleanup
 4. CORRUPT:  Disk error → Segment unreadable → SegmentNotFoundException
 5. RECOVERY: Cannot fix → Must skip (sidegrade) or remove (surgical) or restore
 ```
@@ -137,19 +139,20 @@ TAR files are containers that store segments along with metadata.
 ```
 crx-quickstart/repository/segmentstore/
 ├── data00000a.tar          ← Sequence 0, Generation 'a'
-├── data00001a.tar          ← Sequence 1, Generation 'a'
+├── data00001b.tar          ← Sequence 1, Generation 'b' (rewritten once by GC cleanup)
 ├── data00002a.tar          ← Sequence 2, Generation 'a'
-├── data00003b.tar          ← Sequence 3, Generation 'b' (after compaction)
-├── data00004b.tar          ← Sequence 4, Generation 'b'
-├── data00003a.tar.bak      ← Backup of old generation
+├── data00003a.tar          ← Sequence 3, Generation 'a' (new writes, incl. compaction output)
+├── data00002a.tar.bak      ← Damaged original kept by TAR recovery (see TAR Files)
 ├── journal.log             ← Current journal
+├── gc.log                  ← GC history (one line per successful compaction)
+├── manifest                ← Store version
 └── repo.lock               ← Repository lock file
 ```
 
 **Pattern**: `data[SEQUENCE][GENERATION].tar`
 - **SEQUENCE**: 5-digit number (00000, 00001...)
-- **GENERATION**: Single letter (a, b, c, d...)
-- **Extension**: `.tar` (active), `.tar.bak` (backup)
+- **GENERATION**: Single letter (a, b, c, d... z) — bumped only when GC cleanup rewrites *that* file; new files always start at 'a'
+- **Extension**: `.tar` (active), `.tar.bak` / `.ro.bak` (left behind by TAR index recovery)
 
 ### TAR File Lifecycle
 
@@ -166,10 +169,11 @@ TAR File Structure:
 ├─────────────────────────────────────┤
 │ ...more segments...                 │
 ├─────────────────────────────────────┤
-│ TAR INDEX (footer)                  │ ← Rebuildable metadata
-│ - Segment offsets and UUIDs        │
-│ - Segment reference graph           │
-│ - Binary reference index            │
+│ Footer entries                      │ ← Rebuildable metadata
+│ - Binary reference index (.brf)     │
+│ - Segment reference graph (.gph)    │
+│ - TAR index (.idx): UUIDs, offsets, │
+│   sizes, GC generation, CRC32       │
 └─────────────────────────────────────┘
 ```
 
@@ -204,7 +208,7 @@ The journal tracks the latest state of the repository:
 | **Backup Restore** | Replaces entire store | Bypasses immutability |
 | **TAR Index Recovery** | Rebuilds footer | Metadata is mutable |
 | **Journal Recovery** | Rebuilds journal.log | Doesn't fix missing segments |
-| **Sidegrade** | Copies accessible content | Skips corrupted segments |
+| **Sidegrade** | Copies the paths you choose | Known-corrupt paths are excluded up front (`--exclude-paths`); it aborts on any unreadable node |
 | **Surgical Removal** | Deletes corrupted paths | Works by skipping |
 | **Compaction** | Creates new generation | ❌ Cannot copy corrupted segments |
 

@@ -18,35 +18,38 @@ The DataStore stores binary content (images, PDFs, videos) separately from the s
 Verify all blob references in the repository point to existing blobs:
 
 ```bash
-java -jar oak-run-*.jar datastorecheck \
-    --fds /path/to/datastore \
+# AEM stopped: datastorecheck opens the segment store read-write
+java -jar oak-run-*.jar datastorecheck --consistency \
+    --fds /path/to/FileDataStore.config \
     --store /path/to/segmentstore \
+    --repoHome /path/to/crx-quickstart/repository \
     --dump /tmp/datastore-check
 ```
+
+`--fds` / `--s3ds` / `--azureblobds` take the DataStore's OSGi **config file** (for a FileDataStore: a file with `path=/path/to/datastore`), not the datastore directory.
 
 ### Garbage Collection
 
 Remove unreferenced blobs from the DataStore:
 
 ```bash
-# Mark phase (safe, read-only)
-java -jar oak-run-*.jar datastore \
-    --fds /path/to/datastore \
-    --store /path/to/segmentstore \
-    mark
+# Mark only (writes this repository's references; deletes nothing)
+java -jar oak-run-*.jar datastore --collect-garbage true \
+    --fds-path /path/to/datastore \
+    /path/to/segmentstore
 
-# Sweep phase (deletes unreferenced blobs)
-java -jar oak-run-*.jar datastore \
-    --fds /path/to/datastore \
-    --store /path/to/segmentstore \
-    sweep
+# Mark + sweep (deletes unreferenced blobs older than --max-age, default 86400 s)
+java -jar oak-run-*.jar datastore --collect-garbage \
+    --fds-path /path/to/datastore \
+    /path/to/segmentstore
 ```
 
+There is no separate `mark`/`sweep` sub-command: `--collect-garbage [markOnly]` runs mark only with `true`, mark **and** sweep without it. The segment store path is a positional argument (no `--store`). Use `--fds-path <dir>` or `--fds <config file>` for a FileDataStore, `--s3ds`/`--azureblobds <config file>` for cloud stores.
+
 ::: warning ⚠️ DataStore GC Timing
-- Run mark phase while AEM is running
-- Run sweep phase during maintenance window
-- Allow 24+ hours between mark and sweep
-- Never run sweep without recent mark
+- Blobs modified within `--max-age` (default 24 h; online: `blobGcMaxAgeInSecs`, default 86400) before the mark start are never swept - that is what protects in-flight uploads
+- On a **shared** DataStore, run mark-only on every other repository first; the sweep stops with `Not all repositories have marked references available` until every registered `repository-<id>` has a `references-<id>…` record
+- Never run sweep without recent marks from all sharing repositories
 :::
 
 ## Detailed Guides

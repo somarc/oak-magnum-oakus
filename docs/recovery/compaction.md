@@ -1,7 +1,7 @@
 # 🗜️ Compaction
 
 ::: info 🎯 Scope
-SegmentStore (TarMK) • Oak 1.22+  
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
 **Not for AEMaaCS**
 :::
 
@@ -12,7 +12,7 @@ Compaction (garbage collection) reclaims disk space by removing unreachable segm
 ```
 Disk usage growing despite content deletion
 TAR files accumulating (data00050a.tar, data00051a.tar...)
-"Compaction cancelled: Not enough disk space"
+"TarMK GC #3: compaction cancelled: not enough disk space."
 Online GC not reclaiming expected space
 ```
 
@@ -48,9 +48,21 @@ $ java -jar oak-run-*.jar compact /path/to/segmentstore
 
 ### What It Does
 
-1. **Marks live segments** - Traverses from HEAD and checkpoints
-2. **Copies live data** - Creates new generation TAR files
-3. **Deletes old files** - Removes unreachable segments
+1. **Copies live data** - Rewrites HEAD and all checkpoints into a new generation (new TAR files)
+2. **Deletes old files** - Cleanup removes the old generation (offline compaction retains 1 generation)
+3. **Rewrites journal.log** - Truncates it to the newest revision (see below)
+
+### Options
+
+::: info Oak 1.22 vs 2.4
+- **AEM 6.5 (Oak 1.22.x):** only `--mmap [true|false]` and `--force[=true]`. Offline compaction is always **full**. Note that `--force` takes a boolean: a bare `--force` is read as `false` - use `--force=true`.
+- **AEM 6.5 LTS SP3 (Oak 2.4.0):** `--mmap`, `--force` (plain flag *(since Oak 1.60)*), `--tail` (tail instead of full compaction *(since Oak 1.60)*), `--compactor classic|diff|parallel` *(since Oak 1.28; `parallel` added and made the default in Oak 1.58)*, `--threads <n>` (parallel compactor only, default 1 *(since Oak 1.58)*). `--target-path`, `--persistent-cache-*` and `--garbage-threshold-*` only apply to Azure (`az:`) stores.
+- See [which LTS SP has which Oak](/reference/oak-versions).
+:::
+
+`--force` does **not** mean "full compaction": it ignores a non-matching segment store version and **upgrades the store to the oak-run's format**, which older Oak versions cannot read.
+
+Output ends with `Compaction succeeded in …` (exit 0), `Compaction cancelled after …` (exit 1; no cleanup, journal.log untouched) or `Compaction failed after …` (exit 1, exception).
 
 ### Time Estimates
 
@@ -88,16 +100,16 @@ The offline `compact` command **truncates journal.log** to a single entry:
 **Before compaction:**
 ```
 journal.log:
-rev5 abc123 root 1696350000000
-rev4 def456 root 1696340000000
-rev3 ghi789 root 1696330000000
+abc123…:261920 root 1696350000000   ← rev5
+def456…:198544 root 1696340000000   ← rev4
+ghi789…:173872 root 1696330000000   ← rev3
 ...200 more entries...
 ```
 
 **After compaction:**
 ```
 journal.log:
-rev5 xyz999 root 1696360000000  ← NEW compacted revision, history GONE
+xyz999…:4096 root 1696360000000  ← newest (compacted) revision, history GONE
 ```
 
 **Impact:**
@@ -119,7 +131,11 @@ rev5 xyz999 root 1696360000000  ← NEW compacted revision, history GONE
 
 ## Tail vs Full Compaction
 
-### Tail Compaction (Default Online)
+### Tail Compaction
+
+::: info Default type
+Oak's own default (`SegmentGCOptions`) is **FULL** in both 1.22 and 2.4. Online runs use tail only when the `SegmentRevisionGarbageCollection` MBean attribute `GCType` is set to `TAIL` (or the scheduler, e.g. AEM's Revision Clean Up task, selects it). Offline `compact` gains `--tail` in Oak 1.60.
+:::
 
 - Compacts only **recent segments**
 - Faster, less resource intensive
@@ -132,8 +148,11 @@ rev5 xyz999 root 1696360000000  ← NEW compacted revision, history GONE
 - Very resource intensive
 
 ```bash
-# Full offline compaction
-$ java -jar oak-run-*.jar compact /path/to/segmentstore --force
+# Full offline compaction (the default in both 1.22 and 2.4)
+$ java -jar oak-run-*.jar compact /path/to/segmentstore
+
+# Tail offline compaction (Oak 1.60+ only)
+$ java -jar oak-run-*.jar compact --tail /path/to/segmentstore
 ```
 
 ## Compaction and Corruption
@@ -143,16 +162,17 @@ $ java -jar oak-run-*.jar compact /path/to/segmentstore --force
 ```mermaid
 flowchart LR
     A[Corrupted Segment] --> B[Compaction Runs]
-    B --> C[Cannot Copy Corrupted Data]
-    C --> D[Cleanup Deletes Old Files]
-    D --> E[Data Permanently Lost]
+    B --> C{Reachable from head/checkpoints?}
+    C -->|yes| D[SNFE: run aborted, nothing fixed]
+    C -->|no, only old revisions| E[Succeeds: cleanup deletes old generations]
+    E --> F[Rollback points permanently lost]
 ```
 
 If corruption exists:
-1. Compaction tries to copy corrupted segment
-2. Copy fails (can't read corrupted data)
-3. Cleanup phase deletes old TAR files
-4. **Corrupted data is now GONE** (not just corrupted)
+1. Compaction reads every node of head and every checkpoint (not external DataStore binaries)
+2. If it hits a missing segment, the run is **aborted** (`compaction encountered an error`); the old TAR files stay (online cleanup removes only the half-written new generation; offline `compact` skips cleanup)
+3. If the damage is only in older revisions, compaction **succeeds** and cleanup deletes the older generations
+4. **Those older revisions are now GONE** - you can no longer roll back to them
 
 ### The "Timeline of Death"
 
@@ -168,26 +188,28 @@ Compaction Attempts to Read:
 2. Traverse nodes:
    - /content/good → OK (in segmentA)
    - /content/bad → ERROR! (needs segmentX, which is missing)
-3. Compaction treats missing segment as "node doesn't exist"
-4. Creates new segment WITHOUT /content/bad:
-   tar files: data00006a.tar [segmentD (compacted, gen=1)]
-                              ↓
-                         Contains: /content/good ✓
-                                   /content/bad ✗ (omitted due to error)
-
-Cleanup Deletes Old Tars:
-tar files:   data00006a.tar [segmentD]
-             ← data00005a.tar DELETED (contained segmentX)
-journal.log: HEAD → segmentD
-             rev2 LOST! (was in data00005a.tar)
+3. SegmentNotFoundException propagates:
+   "TarMK GC #N: compaction encountered an error"
+4. Run aborted - no new head; data00005a.tar is kept
+   (online: cleanup reclaims only the half-written new generation;
+    offline: "Compaction cancelled after …", exit 1, no cleanup,
+    journal.log untouched)
 
 Result:
-- Can't access /content/bad (compaction omitted it)
-- Can't roll back to rev2 (old tar deleted)
-- Repository "bricked" - no recovery path
+- /content/bad still broken (compaction fixes nothing)
+- rev2 still reachable - journal rollback still works
+- Online GC will fail the same way on every run
+
+The dangerous variant: once the head is repaired or rolled back so that
+compaction SUCCEEDS, cleanup deletes the old generations (offline also
+truncates journal.log) - any revision you had not yet rescued is gone.
 ```
 
 ### What Should Have Happened
+
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes` is not part of Apache Jackrabbit Oak (any version). It comes from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
+:::
 
 ```
 1. Run oak-run check BEFORE compaction
@@ -229,18 +251,18 @@ If disk fills during compaction, you may end up with a corrupted repository!
 ### What Oak Does Check
 
 **Tail Compaction** has a safety check:
-- Validates previous compacted root is accessible
-- If inaccessible → Tail compaction **ABORTS**
+- Validates previous compacted root (from `gc.log`) is accessible
+- If inaccessible → `base state … is not accessible` → tail compaction is **not applicable** and Oak **falls back to full compaction** (not a stop)
 
-**Disk Space Check**:
-- Cancels if disk/memory runs out during execution
+**Disk Space / Memory Check**:
+- Cancels (`compaction cancelled: not enough disk space.` / `not enough memory.`) when free disk drops to ≤ 25% of the repository size or heap runs low (memory threshold default 15%)
 
 ### What Oak Does NOT Check (Critical Gap)
 
 **Full Compaction** has **NO** pre-flight validation:
 - No validation that HEAD is fully readable before starting
-- Corruption is discovered **during** compaction, not before
-- Corrupted nodes are **silently omitted** from new generation
+- Corruption is discovered **during** compaction, not before - and aborts the run (unreadable nodes are not silently skipped)
+- Missing **DataStore** binaries are never noticed (only their IDs are copied)
 
 **Checkpoint Accessibility**:
 - No pre-flight check that checkpoints are readable
@@ -253,12 +275,12 @@ Scenario: Full compaction with corruption
 2. Full compaction starts (no validation)
 3. Compaction traverses from HEAD:
    - /content/good → OK, copied to new segment
-   - /content/corrupted → ERROR! Silently skips
-   - /apps → OK, copied to new segment
-4. New head created WITHOUT /content/corrupted
-5. Cleanup deletes old tars (containing the corrupted path's history)
-6. Journal.log truncated
-7. Result: Content silently lost, no rollback possible
+   - /content/corrupted → ERROR! Run aborted
+4. Hours of I/O and up to a full copy of disk space wasted; nothing repaired
+5. Repeated attempts (online schedule) keep failing
+6. After someone "fixes" it by removing nodes and compaction finally succeeds,
+   cleanup deletes the old generations and offline compact truncates journal.log
+7. Result: no rollback to pre-fix revisions possible
 ```
 
 ## When Compaction is NOT Safe
@@ -282,31 +304,31 @@ Scenario: Full compaction with corruption
 
 ## Monitoring Compaction
 
-Watch the logs:
+Watch the logs. Oak writes no separate compaction log. Online GC logs through logger `org.apache.jackrabbit.oak.segment.file.FileStore` (in AEM: `crx-quickstart/logs/error.log`); offline `compact` prints to the console.
 
 ```bash
-$ tail -f /path/to/segmentstore/../logs/compaction.log
+$ tail -f crx-quickstart/logs/error.log | grep "TarMK GC"
 ```
 
 Look for:
-- "Compaction started"
-- "Compaction completed"
-- Any errors or exceptions
+- "TarMK GC #N: started"
+- "TarMK GC #N: compaction succeeded in …" / "cleanup completed in …"
+- "compaction cancelled: …", "compaction encountered an error", "cleaning up after failed compaction"
 
 ## Compaction Failure Modes
 
 | Failure | Cause | Recovery |
 |---------|-------|----------|
-| **Compaction cancelled** | Out of disk space, memory, or time | Safe - old tars still intact |
+| **Compaction cancelled / failed** | Out of disk space or memory, cancelled, or SNFE | Safe - old tars still intact |
 | **Cleanup failed** | I/O error, permissions | Partial - new tars created but old not removed |
 | **Journal truncate failed** | File system error | Dangerous - may need manual journal recovery |
-| **Compacted over corruption** | Corruption undiagnosed | **Catastrophic** - restore from backup |
+| **Compacted after corruption was masked** | Damage only in old revisions, or head "fixed" first | **Catastrophic** for rollback - old generations deleted; restore from backup |
 
 ## Key Takeaways
 
 ::: tip Remember
 1. **Check before compact** - Always verify health first
-2. **Never compact corruption** - Makes data loss permanent
+2. **Never compact corruption** - It aborts on SNFE, and a later successful run deletes your rollback points
 3. **Need 2x disk space** - Plan for temporary growth
 4. **Offline truncates journal** - Lose rollback capability
 5. **Online preserves journal** - Prefer for production

@@ -1,7 +1,7 @@
 # 🛠️ Recovery Operations
 
 ::: info 🎯 Scope
-SegmentStore (TarMK) • Oak 1.22+  
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
 **Not for AEMaaCS**
 :::
 
@@ -44,26 +44,36 @@ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 
 ### 3. Surgical Removal
 
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes` and `:remove-nodes` are not part of Apache Jackrabbit Oak (any version). They come from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
+:::
+
 ```bash
 # Step 1: Identify corrupted paths
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
 
-# Step 2: Review log file
-cat /tmp/count-nodes-snfe-*.log
+# Step 2: Review log file (written to the console's working directory)
+cat count-nodes-snfe-*.log
 
 # Step 3: Remove corrupted paths (dry-run first!)
-> :remove-nodes /tmp/count-nodes-snfe-*.log dry-run
-> :remove-nodes /tmp/count-nodes-snfe-*.log
+> :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log dry-run
+> :remove-nodes count-nodes-snfe-YYYYMMDD-HHmmss.log
 > :exit
 ```
+
+`:remove-nodes` deletes only for missing-blob lines. `Missing segment` lines are logged, never deleted: remove those paths one by one with `:remove-node <path>`. See [Surgical Removal](/recovery/surgical).
 
 ### 4. Sidegrade (Last Resort)
 
 ```bash
-java -jar oak-upgrade-*.jar upgrade --copy-binaries \
-    /path/to/corrupted /path/to/new-repo
+# oak-upgrade release matching your oak-core; paths are repository dirs (each containing segmentstore/)
+java -jar oak-upgrade-<oak-version>.jar \
+    --exclude-paths=/path/that/check/flagged \
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
+
+Stops at the first unreadable node, so exclude known-corrupt paths. Copies blob references only; see [Sidegrade](/recovery/sidegrade) to move binaries.
 
 ## Detailed Guides
 
@@ -76,5 +86,5 @@ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
 - [Pre-Text Extraction](/recovery/pre-text-extraction) - Speed up re-indexing after recovery
 
 ::: info 📅 Last Updated
-Content last reviewed: January 2026 • Oak 1.22.x / AEM 6.5.x (also applicable to AEM 6.5 LTS)
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

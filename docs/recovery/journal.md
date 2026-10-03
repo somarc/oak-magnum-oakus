@@ -4,7 +4,7 @@ The `recover-journal` command rebuilds the journal by scanning all segments. It'
 
 ## When to Use
 
-- Journal file is corrupted or missing
+- Journal file points at corrupted revisions (`journal.log` must still exist and contain at least one entry whose segment is present - otherwise the read-only store cannot open: `Cannot start readonly store from empty journal`)
 - `oak-run check` shows journal points to bad segments
 - After unexpected shutdown with corruption
 
@@ -18,37 +18,27 @@ $ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 
 ```mermaid
 flowchart LR
-    A[Scan all TAR files] --> B[Find root segments]
-    B --> C[Validate each candidate]
-    C --> D[Sort by timestamp]
+    A[Scan all TAR files] --> B[Find root candidates]
+    B --> C[Sort by timestamp]
+    C --> D[Drop newest corrupt candidates]
     D --> E[Write new journal.log]
 ```
 
-1. **Scans every segment** in every TAR file
-2. **Identifies root candidates** - segments with "checkpoints" and "root" children
-3. **Validates each** using consistency checker
-4. **Builds new journal** with only valid revisions
+1. **Scans every data segment** in every TAR file
+2. **Identifies root candidates** - node records with "checkpoints" and "root" children, timestamped from the segment info
+3. **Sorts them oldest → newest**, then **validates from the newest backwards** (full head tree incl. segment binaries, then every checkpoint) and drops each corrupt candidate until the first fully consistent one - older candidates are kept unvalidated
+4. **Moves the old journal** to `journal.log.bak.000` (next free `.001`, `.002`, …) and writes the new `journal.log`
 
 ## Example Output
 
 ```
-Recovering journal entries from segments...
-Scanning data00000a.tar... found 1247 segments
-Scanning data00001a.tar... found 1189 segments
-Scanning data00002a.tar... found 892 segments
-
-Found 247 candidate root nodes
-Validating candidates...
-  - 2025-01-13 10:30:00: VALID ✓
-  - 2025-01-13 10:25:00: VALID ✓
-  - 2025-01-13 10:20:00: INVALID (SegmentNotFoundException)
-  - 2025-01-13 10:15:00: VALID ✓
-  ...
-
-Found 124 valid journal entries
-Old journal backed up at journal.log.bak.0
-New journal.log written with 124 entries
+Skipping revision 4f2a9c1e-7b3d-4e8a-9c2f-1a2b3c4d5e6f.0003fe40, corrupted path in head: /content/dam/broken
+Skipping revision 4f2a9c1e-7b3d-4e8a-9c2f-1a2b3c4d5e6f.0003fd10, found unreachable checkpoint 59e3b73e-9c3c-45e3-b6d9-156d7a6e5c52
+Old journal backed up at journal.log.bak.000
+Journal recovered
 ```
+
+Failure messages: `No valid journal entries found, aborting`, `Unable to recover the journal entries, aborting`, `Too many journal backups, please cleanup` (after `.bak.999`). Exit code `0` on success, `1` otherwise. The only option is `-h/--help`.
 
 ## After Recovery
 
@@ -93,7 +83,7 @@ It **can only** rebuild the journal from **existing** segments.
 
 ## If Recovery Fails
 
-If `recover-journal` doesn't find any valid revisions:
+If `recover-journal` doesn't find any valid revisions (`No valid journal entries found, aborting`):
 
 1. **Try sidegrade** - Extract accessible content to new repo
 2. **Restore from backup** - If available
@@ -130,7 +120,7 @@ This is a "riverboat gambler" approach for when you know the exact good revision
 | **Complexity** | 🔧 Requires understanding journal format | 🤖 Automated, no expertise needed |
 | **Safety** | ⚠️ "Riverboat gambler" - if you mess up, you make things worse | ✅ Built-in rollback, backs up old journal |
 | **What you need** | Exact good revision from `check` | Just the segmentstore path |
-| **Risk** | 🎲 High if you truncate wrong line | 🛡️ Low - tool validates everything |
+| **Risk** | 🎲 High if you truncate wrong line | 🛡️ Low - tool validates the newest revisions until one is consistent |
 | **Undo** | Manual restore from backup | Automatic backup at `journal.log.bak.000` |
 
 ### How to Manually Truncate journal.log
@@ -140,7 +130,7 @@ This is a "riverboat gambler" approach for when you know the exact good revision
 $ java -jar oak-run-*.jar check /path/to/segmentstore
 
 # Output:
-Latest good revision for path / is 28c7e87c-1379-4ebb-94c7-0d0372b30a05 from 2025-10-03 10:23:45
+Latest good revision for path / is 28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 from Oct 3, 2025, 10:23:45 AM
 ```
 
 **Step 2: Backup current journal**
@@ -154,14 +144,14 @@ $ cp journal.log journal.log.backup-$(date +%Y%m%d-%H%M%S)
 $ grep "28c7e87c-1379-4ebb-94c7-0d0372b30a05" journal.log
 
 # Output (example):
-28c7e87c-1379-4ebb-94c7-0d0372b30a05 root 1696334625000
+28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 root 1696334625000
 ```
 
 **Step 4: Truncate journal to keep only entries UP TO and INCLUDING good revision**
 ```bash
 # Option A: Using sed (find line number first)
 $ grep -n "28c7e87c-1379-4ebb-94c7-0d0372b30a05" journal.log
-# Output: 1247:28c7e87c-1379-4ebb-94c7-0d0372b30a05 root 1696334625000
+# Output: 1247:28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 root 1696334625000
 
 $ head -1247 journal.log > journal.log.truncated
 $ mv journal.log.truncated journal.log
@@ -173,7 +163,7 @@ $ vi journal.log
 
 # Verify: Check last line is the good revision
 $ tail -1 journal.log
-28c7e87c-1379-4ebb-94c7-0d0372b30a05 root 1696334625000  # ✓ Correct
+28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 root 1696334625000  # ✓ Correct
 ```
 
 **Step 5: Verify before starting AEM**
@@ -199,11 +189,11 @@ $ ./crx-quickstart/bin/start
 ```bash
 # WRONG: Kept lines after the corruption
 $ tail -1 journal.log
-46116fda-7a72-4dbc-af88-a09322a7753a root 1696334999000  # ✗ This is AFTER the good revision
+46116fda-7a72-4dbc-af88-a09322a7753a:254016 root 1696334999000  # ✗ This is AFTER the good revision
 
 # RIGHT: Last line IS the good revision
 $ tail -1 journal.log
-28c7e87c-1379-4ebb-94c7-0d0372b30a05 root 1696334625000  # ✓ Correct
+28c7e87c-1379-4ebb-94c7-0d0372b30a05:261920 root 1696334625000  # ✓ Correct
 ```
 
 **Mistake #2: Truncating BEFORE the good revision**
@@ -223,8 +213,8 @@ $ grep "28c7e87c-1379-4ebb-94c7-0d0372b30a05" journal.log
 
 **Mistake #4: Editing on Windows (line endings)**
 ```bash
-# Windows editors can add \r\n line endings, corrupting journal.log
-# Oak expects Unix line endings (\n only)
+# Windows editors can add \r\n line endings
+# Oak writes Unix line endings (\n only) - keep journal.log exactly as Oak writes it
 # Use: dos2unix journal.log (if you accidentally edited on Windows)
 ```
 
@@ -237,7 +227,7 @@ Option A: Run oak-run recover-journal
 - Time: 3-4 hours to scan all segments
 - Risk: Low (automated)
 - Cost: $30-40K additional downtime
-- Confidence: High (tool validates everything)
+- Confidence: High (tool validates head + checkpoints)
 
 Option B: Manual journal truncation
 - Time: 5 minutes (find revision, edit, restart)
@@ -253,7 +243,7 @@ Decision: If you're experienced → Manual truncation saves $30K
 
 ::: tip Remember
 1. **Safe operation** - Creates backup of old journal
-2. **Scans everything** - Finds all valid revisions in segments
+2. **Scans everything** - Finds all root candidates in segments, keeps them up to the newest consistent one
 3. **May lose recent changes** - Rolls back to last valid state
 4. **Always verify** - Run `check` after recovery
 5. **Manual truncation** - Fast but risky, for experts only

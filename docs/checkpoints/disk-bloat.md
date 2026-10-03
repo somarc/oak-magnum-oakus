@@ -9,7 +9,7 @@ flowchart LR
     A[Checkpoint Created] --> B[Pins Segments]
     B --> C[Indexer Finishes]
     C --> D[New Checkpoint Created]
-    D --> E[Old Checkpoint Orphaned]
+    D --> E[Old Checkpoint NOT Released → Orphaned]
     E --> F[Segments Still Pinned!]
     F --> G[GC Can't Reclaim Space]
 ```
@@ -19,8 +19,8 @@ flowchart LR
 1. **Async indexer starts** → Creates checkpoint
 2. **Indexer processes content** → Checkpoint pins segments
 3. **Indexer finishes** → Creates NEW checkpoint
-4. **Old checkpoint orphaned** → No longer referenced
-5. **But segments still pinned** → GC can't delete them
+4. **Old checkpoint orphaned** → No longer referenced, but its release failed (or a backup/tool never released its own checkpoint)
+5. **But its content is still pinned** → every compaction copies it forward
 
 ## Symptoms
 
@@ -33,15 +33,16 @@ flowchart LR
 ```bash
 $ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 
-Checkpoints:
-  b8dbd53c-af46-4764-bd3b-df48d4a85438 (ACTIVE - referenced by /:async)
-  a7cac42b-bf35-3653-ac2a-ce37c3a74327 (ORPHANED)
-  96bab31a-ae24-2542-9b19-bd26b2963216 (ORPHANED)
-  85a9a20f-9d13-1431-8a08-ac15a1852105 (ORPHANED)
-  ...
-
-Found 47 checkpoints (1 active, 46 orphaned)
+Checkpoints /path/to/segmentstore
+- b8dbd53c-af46-4764-bd3b-df48d4a85438 created 2025-01-13 10:30:00.0 expires ...
+- a7cac42b-bf35-3653-ac2a-ce37c3a74327 created 2024-06-02 08:11:42.0 expires ...
+- 96bab31a-ae24-2542-9b19-bd26b2963216 created 2024-05-29 17:03:10.0 expires ...
+- 85a9a20f-9d13-1431-8a08-ac15a1852105 created 2024-05-27 09:45:51.0 expires ...
+...
+Found 47 checkpoints
 ```
+
+`list` does not mark checkpoints as active or orphaned. Compare the IDs with the values of `/:async` (`console` → `:cd /:async` → `:pn`). Only the `async` and `fulltext-async` values are referenced.
 
 ## Solution
 
@@ -50,12 +51,10 @@ Remove orphaned checkpoints:
 ```bash
 $ java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm-unreferenced
 
-Removing unreferenced checkpoints...
-  Removed: a7cac42b-bf35-3653-ac2a-ce37c3a74327
-  Removed: 96bab31a-ae24-2542-9b19-bd26b2963216
-  ...
-
-Removed 46 orphaned checkpoints
+Checkpoints /path/to/segmentstore
+Referenced checkpoint from /:async@async is b8dbd53c-af46-4764-bd3b-df48d4a85438
+Referenced checkpoint from /:async@fulltext-async is 5be6e6eb-8875-405f-b157-a869080cb859
+Removed 45 checkpoints in 812ms.
 ```
 
 Then run compaction to reclaim space:
@@ -72,7 +71,8 @@ Schedule periodic checkpoint cleanup:
 
 ```bash
 # Weekly maintenance script
-oak-run checkpoints /path/to/segmentstore rm-unreferenced
+# (AEM must be stopped: the tool opens the FileStore read-write and takes repo.lock)
+java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm-unreferenced
 ```
 
 ### Monitor Checkpoint Count
@@ -80,9 +80,10 @@ oak-run checkpoints /path/to/segmentstore rm-unreferenced
 Alert if checkpoints exceed threshold:
 
 ```bash
-COUNT=$(oak-run checkpoints /path/to/segmentstore list | grep -c "ORPHANED")
+# Needs AEM stopped too (repo.lock). Healthy AEM: about one checkpoint per lane plus in-flight ones
+COUNT=$(java -jar oak-run-*.jar checkpoints /path/to/segmentstore list | grep -c '^- ')
 if [ $COUNT -gt 10 ]; then
-    echo "WARNING: $COUNT orphaned checkpoints"
+    echo "WARNING: $COUNT checkpoints"
 fi
 ```
 

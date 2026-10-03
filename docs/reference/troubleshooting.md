@@ -38,8 +38,9 @@ AEM fails to start with repository errors
 
 ### Diagnosis
 ```bash
-# Check for lock file
-$ ls /path/to/segmentstore/repo.lock
+# Check whether another process (AEM, oak-run) still has the store open
+# (repo.lock always exists after first use - its presence alone means nothing)
+$ lsof /path/to/segmentstore/repo.lock
 
 # Check journal
 $ tail /path/to/segmentstore/journal.log
@@ -52,7 +53,7 @@ $ java -jar oak-run-*.jar check /path/to/segmentstore
 
 | Cause | Solution |
 |-------|----------|
-| Stale lock file | Remove `repo.lock` if process not running |
+| Store still open elsewhere | Stop the other process; the OS lock on `repo.lock` is released when it exits (deleting the file is not needed) |
 | Corrupted journal | `recover-journal` |
 | Missing segments | Recovery procedures |
 | Disk full | Free space, then recover |
@@ -181,7 +182,7 @@ $ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list | wc -l
 | Error | First Step |
 |-------|------------|
 | SegmentNotFoundException | `oak-run check` |
-| Won't start | Check `repo.lock`, run `check` |
+| Won't start | Check who holds `repo.lock`, run `check` |
 | Disk growing | Check checkpoints |
 | Compaction fails | Check for corruption first |
 | Indexing stuck | Check `/:async` node |

@@ -12,13 +12,15 @@ Sidegrade uses `oak-upgrade` to extract accessible content from a corrupted repo
 ## Basic Usage
 
 ```bash
-$ java -jar oak-upgrade-*.jar upgrade \
-    /path/to/corrupted/segmentstore \
-    /path/to/new/segmentstore
+$ java -jar oak-upgrade-<oak-version>.jar \
+    /path/to/corrupted/crx-quickstart/repository \
+    /path/to/new/repository
 ```
 
+Source and destination are **positional** and point at the **repository directory that contains `segmentstore/`** — oak-upgrade appends `segmentstore` itself. Do not pass the `segmentstore` directory, and do not add an `upgrade` sub-command (the tool's own help banner prints `java -jar oak-upgrade-*.jar upgrade`, but a third positional argument fails with `Too much node store arguments`).
+
 ::: warning Different JAR
-This uses `oak-upgrade-*.jar`, NOT `oak-run-*.jar`. They are separate tools.
+This uses `oak-upgrade-*.jar`, NOT `oak-run-*.jar`. They are separate tools (`oak-run upgrade` only prints "This command was moved to the oak-upgrade module"). Use the standalone `oak-upgrade` release that matches your oak-core version (`oak-upgrade-1.22.x.jar` on AEM 6.5, `oak-upgrade-2.4.0.jar` on AEM 6.5 LTS SP3) — the AEM 6.5 LTS release notes say crx2oak is not supported there. See [which LTS SP has which Oak](/reference/oak-versions).
 :::
 
 ## What It Does
@@ -26,31 +28,36 @@ This uses `oak-upgrade-*.jar`, NOT `oak-run-*.jar`. They are separate tools.
 ```mermaid
 flowchart LR
     A[Corrupted Repo] --> B[Traverse from HEAD]
-    B --> C[Copy accessible nodes]
-    C --> D[Skip corrupted nodes]
+    B --> C{Unreadable node?}
+    C -->|no| D[Copy node]
+    C -->|yes| X[Abort: Failed to copy content]
     D --> E[New Clean Repo]
+    X --> F[Re-run with --exclude-paths]
 ```
 
-1. **Attempts to traverse from HEAD**
-2. **Copies every accessible node** to new repository
-3. **Skips nodes** that throw `SegmentNotFoundException`
+1. **Attempts to traverse from HEAD** (on a full segment→segment copy it first copies the checkpoints, then applies the diff to HEAD)
+2. **Copies every node it is asked to copy** to the new repository
+3. **Does NOT skip unreadable nodes** — a `SegmentNotFoundException` anywhere in the copied tree aborts the whole run with `Failed to copy content`. Leave known-corrupt paths out with `--exclude-paths` (find them first with `oak-run check` or `:count-nodes`)
 4. **Results in a new, smaller repository** with only recoverable content
 
 ## Example
 
 ```bash
-$ java -jar oak-upgrade-*.jar upgrade --copy-binaries \
-    /path/to/corrupted /path/to/recovered
+$ java -jar oak-upgrade-<oak-version>.jar \
+    --exclude-paths=/content/corrupted \
+    /path/to/corrupted/crx-quickstart/repository /path/to/recovered/repository
 
-Migrating repository...
-Copied: /
-Copied: /content
-Copied: /content/we-retail
-ERROR: Skipping /content/corrupted: SegmentNotFoundException
-Copied: /apps
+... paths to exclude: [/content/corrupted]
+... Source: SEGMENT_TAR[/path/to/corrupted/crx-quickstart/repository]
+... Destination: SEGMENT_TAR[/path/to/recovered/repository]
+... Only blob references will be copied
+... Checkpoints won't be migrated because of the specified paths
+... Copying node #10000: /content/...
+... Copying node #20000: /apps/...
 ...
-Migration complete: 85% of nodes recovered
 ```
+
+Progress is logged every 10,000 nodes (`-Doak.upgrade.logNodeCopy=<n>` to change). If a corrupted node is hit, the run ends with `javax.jcr.RepositoryException: Failed to copy content` — add that path to `--exclude-paths` and start over with an empty destination.
 
 ## Options
 
@@ -58,17 +65,22 @@ Migration complete: 85% of nodes recovered
 
 | Option | Description |
 |--------|-------------|
-| `--copy-binaries` | Copy binaries to new DataStore (recommended for recovery) |
+| `--copy-binaries` | Copy binary content instead of only references. Without a target DataStore option the binaries get embedded in the new segment store |
 | `--include-paths` | Only migrate specific paths (comma-separated) |
 | `--exclude-paths` | Skip specific paths (comma-separated) |
-| `--merge-paths` | Merge into existing repository (comma-separated) |
+| `--merge-paths` | Paths to merge with the existing destination content instead of replacing it (comma-separated) |
+
+::: tip Binaries: references vs copies
+If the source uses an external DataStore and you pass no DataStore options, only **blob references** are copied — the new repository must keep using the same DataStore. Pass `--src-datastore` (plus `--datastore` to copy into a new FileDataStore, or `--copy-binaries` to embed them) to actually move binaries. When the source has external binaries, `--copy-binaries` or a target DataStore option *without* a source DataStore option is rejected ("This combination of data- and node-stores is not supported").
+:::
 
 ### Recovery-Specific Options
 
 | Option | Description |
 |--------|-------------|
-| `--fail-on-error` | Fail completely if nodes can't be read (default: skip and continue) |
-| `--ignore-missing-binaries` | Proceed even if binaries are missing from DataStore |
+| `--fail-on-error` | Only affects JCR2 (CRX2) → Oak upgrades. A segment→segment sidegrade never skips unreadable nodes, with or without this flag |
+| `--ignore-missing-binaries` | Proceed even if binaries are missing from the **source** DataStore (only takes effect with a source DataStore option: `--src-datastore`, `--src-s3datastore` or `--src-azuredatastore`) |
+| `--skip-checkpoints` | Don't copy checkpoints on a full segment→segment migration (checkpoints are already skipped when include/exclude/merge paths or version options are used) |
 | `--copy-versions` | Copy version storage: `true`, `false`, or `yyyy-mm-dd` cutoff (default: true) |
 | `--copy-orphaned-versions` | Copy orphaned versions: `true`, `false`, or `yyyy-mm-dd` cutoff (default: true) |
 
@@ -85,37 +97,31 @@ Migration complete: 85% of nodes recovered
 |--------|-------------|
 | `--src-datastore <path>` | Source FileDataStore directory |
 | `--datastore <path>` | Target FileDataStore directory |
-| `--src-s3datastore <path>` | Source S3 DataStore directory |
+| `--src-s3datastore <path>` | Source S3 DataStore directory (local cache dir) |
 | `--src-s3config <file>` | Source S3 configuration file |
-| `--s3datastore <path>` | Target S3 DataStore directory |
+| `--s3datastore <path>` | Target S3 DataStore directory (local cache dir) |
 | `--s3config <file>` | Target S3 configuration file |
+
+`--fds-path` is an **oak-run** option; oak-upgrade does not accept it — use `--src-datastore` / `--datastore`.
 
 ### Source/Destination Formats
 
-oak-upgrade supports multiple repository formats:
+For TarMK there is no prefix — pass the plain repository directory:
 
 ```bash
-# Local segment-tar (most common)
-/path/to/segmentstore
-
-# Azure Blob Storage
-az:https://myaccount.blob.core.windows.net/container/repo
-# (set AZURE_SECRET_KEY environment variable)
-
-# MongoDB
-mongodb://host:port/database
-
-# Explicit segment-tar prefix
-segment-tar:/path/to/segmentstore
+# Local segment-tar: the directory that CONTAINS segmentstore/
+/path/to/crx-quickstart/repository
 ```
+
+(oak-upgrade also accepts `az:`, `mongodb://` and `jdbc:` descriptors, but Azure segment stores and DocumentNodeStore are outside the scope of this guide. There is no `segment-tar:` prefix and no `--src=` / `--dst=` option.)
 
 ### Selective Migration
 
 ```bash
 # Only migrate /content and /apps
-$ java -jar oak-upgrade-*.jar upgrade \
+$ java -jar oak-upgrade-<oak-version>.jar \
     --include-paths=/content,/apps \
-    /path/to/corrupted /path/to/new
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
 
 ### Merge with Old Backup
@@ -127,11 +133,11 @@ If you have an old backup and want to merge recent accessible content:
 # (DevOps restore operation)
 
 # 2. Merge accessible recent content from corrupted repo
-$ java -jar oak-upgrade-*.jar upgrade \
+$ java -jar oak-upgrade-<oak-version>.jar \
     --include-paths=/content,/home \
     --merge-paths=/content,/home \
-    --src=segment-tar:/path/to/corrupted/segmentstore \
-    --dst=segment-tar:/path/to/restored/segmentstore
+    /path/to/corrupted/crx-quickstart/repository \
+    /path/to/restored/crx-quickstart/repository
 
 # Result: Old backup + recent changes (minus corrupted paths)
 ```
@@ -142,12 +148,14 @@ If DataStore has missing blobs but you want to salvage the repository structure:
 
 ```bash
 # Proceed even if binaries are missing
-$ java -jar oak-upgrade-*.jar upgrade \
+$ java -jar oak-upgrade-<oak-version>.jar \
     --ignore-missing-binaries \
-    --copy-binaries \
-    /path/to/corrupted /path/to/new
+    --src-datastore=/path/to/corrupted/datastore \
+    --datastore=/path/to/new/datastore \
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 
-# Result: Repository structure intact, missing binaries become broken references
+# Result: Repository structure intact; each missing binary is logged
+# ("No blob found for id [...]") and read as an empty stream
 # You'll need to re-upload missing assets later
 ```
 
@@ -157,15 +165,15 @@ Version storage can be huge. Skip it to speed up recovery:
 
 ```bash
 # Skip all version history
-$ java -jar oak-upgrade-*.jar upgrade \
+$ java -jar oak-upgrade-<oak-version>.jar \
     --copy-versions=false \
     --copy-orphaned-versions=false \
-    /path/to/corrupted /path/to/new
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 
 # Or only copy versions from last 30 days
-$ java -jar oak-upgrade-*.jar upgrade \
+$ java -jar oak-upgrade-<oak-version>.jar \
     --copy-versions=2025-12-15 \
-    /path/to/corrupted /path/to/new
+    /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
 
 ## Standby Recovery: Why It Rarely Works
@@ -237,7 +245,7 @@ These times are **I/O bound** - sidegrade must read every accessible node from t
 
 1. **Verify new repository**
    ```bash
-   $ java -jar oak-run-*.jar check /path/to/new/segmentstore
+   $ java -jar oak-run-*.jar check /path/to/new/repository/segmentstore
    ```
 
 2. **Assess what was lost**
@@ -248,7 +256,7 @@ These times are **I/O bound** - sidegrade must read every accessible node from t
 3. **Replace old repository**
    ```bash
    $ mv /path/to/old/segmentstore /path/to/old/segmentstore.corrupted
-   $ mv /path/to/new/segmentstore /path/to/old/segmentstore
+   $ mv /path/to/new/repository/segmentstore /path/to/old/segmentstore
    ```
 
 4. **Start AEM**

@@ -8,45 +8,44 @@ DataStore GC uses a mark-and-sweep approach:
 
 ```mermaid
 flowchart LR
-    A[Mark Phase] --> B[Wait 24+ hours]
-    B --> C[Sweep Phase]
-    C --> D[Space Reclaimed]
+    A[Mark Phase] --> B[Sweep Phase]
+    B --> C[Space Reclaimed]
 ```
 
 ### Why Two Phases?
 
-The gap ensures no in-flight uploads are deleted:
-- **Mark**: Records all referenced blobs
-- **Wait**: Allows pending uploads to complete
-- **Sweep**: Deletes unreferenced blobs
+A normal run does both phases back to back (`markOnly=false`); mark-only exists for **shared** DataStores:
+- **Mark**: Records all referenced blobs (on a shared DataStore also stored as a `references-<repositoryId>_…` record)
+- **Sweep**: Deletes blobs that are not referenced **and** were last modified more than `maxAge` before the mark started (default 86400 s = 24 h) - this window is what protects in-flight uploads
+- **Shared DataStore**: every repository runs mark-only first; the sweep refuses to run (`Not all repositories have marked references available`) until each registered `repository-<id>` has references
 
 ## Mark Phase
 
 ```bash
 # Via JMX (AEM running)
-# BlobGCMBean → startBlobGC(markOnly=true)
+# org.apache.jackrabbit.oak:type=BlobGarbageCollection → startBlobGC(markOnly=true)
 
-# Via oak-run (AEM stopped)
-$ java -jar oak-run-*.jar datastore \
-    --store /path/to/segmentstore \
-    --s3ds /path/to/s3datastore.config \
-    mark
+# Via oak-run
+$ java -jar oak-run-*.jar datastore --collect-garbage true \
+    --s3ds /path/to/S3DataStore.config \
+    /path/to/segmentstore
 ```
 
 ## Sweep Phase
 
-**Wait at least 24 hours after mark**, then:
+There is no sweep-only operation: `markOnly=false` runs **mark + sweep** (on a shared DataStore, after all other repositories have marked):
 
 ```bash
 # Via JMX (AEM running)
-# BlobGCMBean → startBlobGC(markOnly=false)
+# org.apache.jackrabbit.oak:type=BlobGarbageCollection → startBlobGC(markOnly=false)
 
-# Via oak-run (AEM stopped)
-$ java -jar oak-run-*.jar datastore \
-    --store /path/to/segmentstore \
-    --s3ds /path/to/s3datastore.config \
-    sweep
+# Via oak-run
+$ java -jar oak-run-*.jar datastore --collect-garbage \
+    --s3ds /path/to/S3DataStore.config \
+    /path/to/segmentstore
 ```
+
+oak-run options (both 1.22 and 2.4): `--collect-garbage [markOnly]`, `--max-age <sec>` (default 86400), `--check-consistency-gc` (consistency check right after GC), `--batch` (default 2048), `--work-dir` (default `temp`), `--out-dir` (default `datastore-out`), `--verbose`. Oak 2.4 adds `--sweep-only-refs-past-retention` *(since Oak 1.28 — not in AEM 6.5; see [which LTS SP has which Oak](/reference/oak-versions))*.
 
 ## Time Estimates
 
@@ -80,7 +79,7 @@ s3Region=us-east-1
 
 ::: tip DataStore GC Tips
 1. **Run SegmentStore GC first** - Removes references to deleted content
-2. **Wait 24+ hours between mark and sweep** - Prevents deleting in-flight uploads
+2. **Keep `maxAge` at ≥ 24 h** (default 86400 s) - Blobs newer than that are never swept, which protects in-flight uploads
 3. **Run during low-traffic periods** - Reduces risk of conflicts
 4. **Verify with consistency check** - After GC, ensure no missing blobs
 :::
@@ -91,9 +90,9 @@ s3Region=us-east-1
 
 **Symptom**: Missing binaries after GC
 
-**Cause**: Sweep ran too soon after mark
+**Cause**: `maxAge` set too low, or (shared DataStore) a repository's references missing/stale when the sweep ran
 
-**Prevention**: Always wait 24+ hours
+**Prevention**: Keep the default 24 h `maxAge`; make sure every sharing repository has marked
 
 ### GC Not Reclaiming Space
 
@@ -110,7 +109,7 @@ s3Region=us-east-1
 ## Key Takeaways
 
 ::: tip Remember
-1. **Two phases** - Mark, wait 24h, sweep
+1. **Two phases** - Mark, then sweep (blobs younger than `maxAge`, default 24 h, are kept)
 2. **Run SegmentStore GC first** - Remove stale references
 3. **Verify after** - Run consistency check
 4. **Separate from SegmentStore GC** - Different process, different storage

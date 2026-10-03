@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "The Magnum OAKus"
   text: "Production-grade recovery for Apache Oak"
-  tagline: "SegmentStore (TarMK) • Not for AEMaaCS"
+  tagline: "SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 (AEM 6.5 & 6.5 LTS) • Not for AEMaaCS"
   image:
     src: /oak-tree.svg
     alt: Oak Tree
@@ -59,6 +59,8 @@ The definitive guide to Apache Oak repository operations, born from years of pro
 
 ::: danger 🎯 SCOPE
 This guide requires direct filesystem access to the repository.
+
+Verified against **Oak 1.22.x** (AEM 6.5) and **Oak 2.4.0** (AEM 6.5 LTS SP3). [Check your Oak version →](/reference/oak-versions)
 
 **Not for AEMaaCS**
 :::
@@ -124,10 +126,10 @@ Originally authored for Adobe Customer Support, The Magnum OAKus represents thou
 | | Abstracted repository layer |
 
 **Version Context:**
-- Oak 1.22.x is the Oak version for AEM 6.5.x (Java 8/11)
-- Oak 1.40+ / 1.60+ corresponds to AEM 6.5 LTS (Java 17/21) — closely follows apache-jackrabbit-oak for AEMaaCS
-- Procedures tested primarily on AEM 6.5.x with Oak 1.22.x
-- Some behaviors differ between Oak versions — check release notes
+- **AEM 6.5** runs Oak **1.22.x** (6.5.25.0 requires `oak-core` 1.22.20 or later)
+- **AEM 6.5 LTS** moves Oak forward with each service pack: GA 1.68.x → SP1 1.78.1 → SP2 1.88.0 → SP3 **2.4.0**
+- Every procedure is checked against Oak 1.22.24 and 2.4.0; differences are marked with the Oak release that introduced them
+- Use the oak-run release that matches your `oak-core` — see [Oak Version Scope](/reference/oak-versions)
 
 **Philosophy:**
 - **Backup-first** - The only guaranteed recovery method
@@ -135,6 +137,6 @@ Originally authored for Adobe Customer Support, The Magnum OAKus represents thou
 - **Time-bounded decisions** - When in doubt, restore from backup
 
 ::: info 📅 Last Updated
-Content last reviewed: January 2026 • Oak 1.22.x / AEM 6.5.x (also applicable to AEM 6.5 LTS)
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::
 

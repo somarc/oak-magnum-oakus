@@ -1,20 +1,12 @@
 # 🔪 Surgical Removal
 
 ::: info 🎯 Scope
-SegmentStore (TarMK) • Oak 1.22+  
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
 **Not for AEMaaCS**
 :::
 
-::: warning ⚠️ Requires somarc/apache-jackrabbit-oak Fork
-The `:count-nodes` and `:remove-nodes` console commands are **not available** in the upstream Apache Jackrabbit Oak project. They exist only in the [somarc/apache-jackrabbit-oak](https://github.com/somarc/apache-jackrabbit-oak) fork.
-
-To use these commands, build oak-run from the fork:
-```bash
-git clone https://github.com/somarc/apache-jackrabbit-oak.git
-cd apache-jackrabbit-oak
-mvn clean install -DskipTests -pl oak-run -am
-# JAR will be at oak-run/target/oak-run-*.jar
-```
+::: warning ⚠️ Not in Apache Oak
+`:count-nodes`, `:remove-nodes` and `:remove-node` are not part of Apache Jackrabbit Oak (any version). They come from a community fork. See [Fork-only console commands](/reference/oak-versions#fork-only-console-commands) for how to get a build that matches your Oak version.
 :::
 
 Surgical removal lets you **precisely remove corrupted paths** while preserving the rest of the repository. It's more work than journal recovery but can save more data.
@@ -44,7 +36,7 @@ flowchart LR
     A[count-nodes] --> B[Identify bad paths]
     B --> C[Review log file]
     C --> D[remove-nodes dry-run]
-    D --> E[remove-nodes]
+    D --> E[remove-nodes / remove-node]
     E --> F[Verify with check]
 ```
 
@@ -59,29 +51,32 @@ $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 > :count-nodes deep analysis
 ```
 
+`:count-nodes [segment-binaries | datastore-binaries | deep] [analysis]` always walks the whole tree from `/` (it takes no path argument) and only reads. `deep` also reads every segment and DataStore binary stream; `analysis` adds a grouped summary of corrupted paths with recovery hints.
+
 ### What count-nodes Does
 
 - Traverses entire repository tree
 - Tests accessibility of every node
 - Logs `SegmentNotFoundException` errors to file
-- Creates `/tmp/count-nodes-snfe-*.log`
+- Creates `count-nodes-snfe-yyyyMMdd-HHmmss.log` in the **current working directory** of the console (not `/tmp`)
+- Prints progress every 50,000 nodes and flags nodes with ≥ 1,000 children
 
 ### Example Output
 
 ```
-Counting nodes...
-/content - OK
-/content/dam - OK
-/content/dam/2024 - OK
-/content/dam/2024/Q3 - SegmentNotFoundException!
-  Logged to /tmp/count-nodes-snfe-1704963300000.log
-/content/dam/2024/Q4 - OK
-/apps - OK
+Counting nodes in tree /
+  50000
+  100000
+Warning: Missing segment at /content/dam/2024/Q3/: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
+Warning: Missing blob (datastore) at /content/dam/2024/Q4/hero.jpg/jcr:content/renditions/original/jcr:content/: org.apache.jackrabbit.core.data.DataStoreException: Record ... does not exist
 ...
-
-Completed. Found 3 corrupted paths.
-See /tmp/count-nodes-snfe-1704963300000.log
+Total nodes in tree /: 1234567
+Total binaries in tree /: 45678
+Total missing segments: 1
+Total missing blobs: 1
 ```
+
+Printed paths end in `/`. Only problems are printed — healthy nodes are not listed.
 
 ### Time Estimate
 
@@ -104,16 +99,25 @@ These times are **I/O bound** - `count-nodes` must traverse every node in the re
 ## Step 2: Review the Log
 
 ```bash
-$ cat /tmp/count-nodes-snfe-*.log
+$ grep '^Warning:' count-nodes-snfe-20240111-093500.log
 
-/content/dam/2024/Q3/corrupted-asset.pdf
-/content/dam/2024/Q3/another-bad-file.jpg
-/var/audit/2024/01/15/corrupted-entry
+Warning: Missing segment at /content/dam/2024/Q3/: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
+Warning: Missing blob at /content/dam/2024/Q4/hero.jpg/jcr:content/renditions/original/jcr:content/: org.apache.jackrabbit.core.data.DataStoreException: Record ... does not exist
+Warning: Unable to read node /var/audit/2024/01/15/corrupted-entry/: ...
 ```
+
+::: warning ⚠️ What `:remove-nodes` acts on
+`:remove-nodes` only deletes for these input lines:
+- `Warning: Missing blob at <path>: org.apache.jackrabbit.core.data.DataStoreException: Record …` (missing DataStore binaries)
+- datastore consistency-check lines `aa/bb/cc/<64-hex blob id>,<path>`
+- `Warning: Unable to read node …` lines (it splits these on `" due to "`, so count-nodes' `<path>: <msg>` format usually won't resolve to a node)
+
+**`Warning: Missing segment at …` lines are only counted and logged as `[WARN]` — they are never deleted.** For SNFE paths, review them and remove each one with [`:remove-node`](#single-node-removal).
+:::
 
 ## 🚨 CRITICAL: Surgical Removal Limitations
 
-**`count-nodes` + `remove-nodes` is NOT a guarantee and NOT always viable!**
+**`count-nodes` + `remove-nodes` / `remove-node` is NOT a guarantee and NOT always viable!**
 
 ### When Surgical Removal Works ✅
 
@@ -162,35 +166,34 @@ Corrupted paths that are **critical to AEM/Oak operation**:
 
 #### Property Indexes (Synchronous - AEM Won't Start if Corrupted)
 
-Property indexes are **synchronous** - they update immediately on every write. Oak/AEM **validates these indexes on startup** and will **refuse to start** if they're corrupted or missing.
+Property indexes are **synchronous** - they are updated inside the same commit as every write. Oak does **not** run a startup validation of them; instead, any commit that has to update a corrupted index reads the missing segment and **fails**, so AEM's own startup writes fail and AEM **won't come up**.
 
 | Path | Why Critical | Impact |
 |------|--------------|--------|
 | `/oak:index/uuid` | Maps JCR UUIDs to node paths | AEM cannot start - UUID lookups fail |
 | `/oak:index/nodetype` | Indexes `jcr:primaryType` and `jcr:mixinTypes` | AEM cannot start - node type validation fails |
-| `/oak:index/counter` | Tracks global counters | May prevent AEM startup |
 
 **Why Property Indexes are Critical:**
 ```
 Property Index Characteristics:
 1. Synchronous updates - every write immediately updates index
-2. Validated on startup - Oak checks integrity before allowing access
+2. Updated inside the commit - a missing segment under the index fails the commit
 3. Used by core Oak APIs - UUID lookups, node type queries
 4. Cannot be disabled - required for JCR specification compliance
 
-Startup Sequence:
-1. Oak opens FileStore
-2. Oak validates property indexes (uuid, nodetype, counter)
-3. If validation fails → Oak refuses to start
-4. If segments missing → validation fails → AEM won't start
+Failure Sequence:
+1. Oak opens FileStore (no index validation happens here)
+2. AEM startup commits content that touches uuid / nodetype
+3. Index update reads the missing segment → SegmentNotFoundException → commit fails
+4. Startup commits keep failing → AEM won't start
 ```
 
 **Contrast with Lucene Indexes (Asynchronous):**
-- Lucene indexes (`/oak:index/damAssetLucene`, `/oak:index/cqPageLucene`) are **asynchronous**
+- Lucene indexes (`/oak:index/damAssetLucene`, `/oak:index/cqPageLucene`) are **asynchronous** (so is `/oak:index/counter`, an async `counter`-type index, not a property index)
 - Updated in background by async indexing threads
 - Corruption doesn't prevent AEM startup (indexing lane just fails)
 - Can be deleted and rebuilt via re-indexing
-- **NOT validated on startup** - AEM starts even if Lucene indexes corrupted
+- **Not on the commit path** - AEM starts even if Lucene indexes corrupted
 
 #### Other Critical Paths
 
@@ -198,7 +201,7 @@ Startup Sequence:
 |------|--------------|--------|
 | `/jcr:system/jcr:nodeTypes` | Node type definitions | Repository unusable |
 | `/jcr:system/jcr:namespaces` | Namespace registry | Repository unusable |
-| `/rep:security` | ACLs, users, groups, permissions | AEM cannot start |
+| `/jcr:system/rep:permissionStore` | Compiled ACL permissions (Oak permission store) | AEM cannot start |
 | `/home/users/system/*/admin` | Admin user account | AEM unusable |
 | `/home/users/system/*/authentication-service` | Authentication service user | Bundles fail to initialize |
 | `/home/users/system/*/replication-service` | Replication service user | Replication fails |
@@ -211,13 +214,16 @@ If `/libs` paths are corrupted but AEM can still start:
 **Option 1: Sidegrade from Vanilla Instance** (Recommended)
 1. Instantiate clean vanilla AEM instance (no customizations)
 2. Patch to **exact same service pack level** as affected instance
-3. Use `oak-upgrade` to sidegrade **only** corrupted `/libs` paths:
+3. Stop both instances, then use `oak-upgrade` (same version as your oak-core) to sidegrade **only** corrupted `/libs` paths. Source and destination are positional and point at the **repository** directory that contains `segmentstore/` (oak-upgrade appends `segmentstore` itself):
    ```bash
-   java -jar oak-upgrade-*.jar \
+   java -jar oak-upgrade-<oak-version>.jar \
      --include-paths=/libs/granite/core,/libs/cq/core \
-     --src=segment-tar:/path/to/vanilla/segmentstore \
-     --dst=segment-tar:/path/to/affected/segmentstore
+     --src-datastore=/path/to/vanilla/crx-quickstart/repository/datastore \
+     --datastore=/path/to/affected/crx-quickstart/repository/datastore \
+     /path/to/vanilla/crx-quickstart/repository \
+     /path/to/affected/crx-quickstart/repository
    ```
+   With a FileDataStore, pass both `--src-datastore` and `--datastore` so the vanilla binaries are copied into the affected DataStore; without them only blob references are copied, and they would point at binaries the affected DataStore doesn't have. See [Sidegrade](/recovery/sidegrade).
 4. Restart affected AEM instance to verify
 
 **Option 2: Content Package from Parallel Instance**
@@ -241,57 +247,58 @@ If `/libs` paths are corrupted but AEM can still start:
 | `/oak:index/damAssetLucene` | ⚠️ **RISKY** | Index definition - must recreate manually |
 | `/oak:index/uuid` | ❌ **NO** | **CRITICAL**: Property index (sync), AEM won't start |
 | `/oak:index/nodetype` | ❌ **NO** | **CRITICAL**: Property index (sync), AEM won't start |
-| `/oak:index/counter` | ❌ **NO** | **CRITICAL**: Property index (sync), may prevent startup |
 | `/jcr:system/jcr:nodeTypes` | ❌ **NO** | **CRITICAL**: Content model definitions |
 | `/jcr:system/jcr:namespaces` | ❌ **NO** | **CRITICAL**: Namespace registry |
-| `/rep:security` | ❌ **NO** | **CRITICAL**: Security/auth breaks |
+| `/jcr:system/rep:permissionStore` | ❌ **NO** | **CRITICAL**: Security/auth breaks |
 | `/libs/*` | ⚠️ Maybe | May prevent startup, sidegrade from vanilla |
 | `/apps/myproject` | ✅ Yes | Custom code, redeploy via CI/CD |
 
 **Rule of Thumb**: If `count-nodes analysis` shows corruption in:
-- `/oak:index` (especially `uuid`, `nodetype`, `counter`)
+- `/oak:index` (especially `uuid`, `nodetype`)
 - `/jcr:system/jcr:nodeTypes` or `/jcr:system/jcr:namespaces`
-- `/rep:security`
+- `/jcr:system/rep:permissionStore`
 - `/home/users/system/*` or `/home/groups/*/administrators`
 
 **Skip surgical removal and go directly to restore/sidegrade**.
 
 ## Step 3: Dry Run
 
-**Always** do a dry run first:
+**Always** do a dry run first. `:remove-nodes <file> [dry-run] [debug]` takes the exact file name (no `*` wildcard expansion):
 
 ```bash
 # In oak-run console:
-> :remove-nodes /tmp/count-nodes-snfe-*.log dry-run
+> :remove-nodes count-nodes-snfe-20240111-093500.log dry-run
+RemoveNodesCommand completed. Full detailed log at: /current/dir/remove-nodes-20240111-101500.log
 ```
 
 ### Dry Run Output
 
+The console prints only the log location; the details go to `remove-nodes-yyyyMMdd-HHmmss.log` in the current directory:
+
 ```
-DRY RUN - No changes will be made
+[INFO] [count-nodes:blob-missing] Attempting advanced removal at: <path>
+[DELETE] [count-nodes:blob-missing] Node at '<node>' removed (pattern type: <damOriginal|damRendition|folderThumb|...>). [DRY RUN]
+[WARN] [count-nodes:segment-not-found] Warning: Missing segment at /content/dam/2024/Q3/: Segment 0a1b2c3d-... not found
 
-Would remove:
-  /content/dam/2024/Q3/corrupted-asset.pdf
-  /content/dam/2024/Q3/another-bad-file.jpg
-  /var/audit/2024/01/15/corrupted-entry
-
-Total: 3 nodes would be removed
+==== Delete Summary Report ====
+*** DRY RUN MODE: No nodes were actually deleted. ***
+DAM Asset (original binary removed):        ...
+...
 ```
 
-Review this carefully before proceeding.
+Review this carefully before proceeding:
+- A missing **original** rendition (`…/jcr:content/renditions/original/jcr:content`) deletes the **whole asset**; other renditions and `folderThumbnail` delete just that node.
+- Paths shallower than 3 levels are refused.
+- `Missing segment` lines show up as `[WARN]` only — handle them with `:remove-node`.
 
 ## Step 4: Execute Removal
 
+Removal needs the console opened with `--read-write`. Each deletion is merged as its own commit.
+
 ```bash
 # In oak-run console:
-> :remove-nodes /tmp/count-nodes-snfe-*.log
-
-Removing nodes...
-  Removed: /content/dam/2024/Q3/corrupted-asset.pdf
-  Removed: /content/dam/2024/Q3/another-bad-file.jpg
-  Removed: /var/audit/2024/01/15/corrupted-entry
-
-Completed. Removed 3 nodes.
+> :remove-nodes count-nodes-snfe-20240111-093500.log
+RemoveNodesCommand completed. Full detailed log at: /current/dir/remove-nodes-20240111-102000.log
 
 > :exit
 ```
@@ -306,12 +313,15 @@ If check passes clean, start AEM.
 
 ## Single Node Removal
 
-For removing a single known path:
+For removing a single known path — this is how you remove the `Missing segment at` paths from the count-nodes log (drop the trailing `/`):
 
 ```bash
-# In oak-run console:
-> :remove-node /content/dam/2024/Q3/corrupted-asset.pdf
+# In oak-run console (opened with --read-write):
+> :remove-node /content/dam/2024/Q3
+Node at path '/content/dam/2024/Q3' removed successfully.
 ```
+
+`:remove-node` has **no dry-run** and writes no log file; it refuses the root and top-level nodes (depth ≤ 1).
 
 ## Best Practices
 
@@ -336,10 +346,10 @@ For removing a single known path:
 
 ::: tip Remember
 1. **count-nodes finds problems** - Logs corrupted paths
-2. **remove-nodes fixes them** - Surgically removes bad nodes
+2. **remove-nodes / remove-node fix them** - remove-nodes handles missing-blob lines; missing-segment paths need remove-node
 3. **Always dry-run** - Review before executing
 4. **Check critical paths** - Some paths cannot be removed
-5. **Property indexes are CRITICAL** - uuid, nodetype, counter cannot be removed
+5. **Property indexes are CRITICAL** - uuid, nodetype cannot be removed
 6. **Lucene indexes are EXPENSIVE** - Full-text re-indexing takes weeks
 7. **Verify with check** - Confirm repository is healthy
 :::
