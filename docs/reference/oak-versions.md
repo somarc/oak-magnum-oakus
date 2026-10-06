@@ -131,7 +131,7 @@ Only `oak-run` is built; every other Oak module comes from Maven Central at the 
 | `:binary-paths` | `:binary-paths <blob-ids-file>` | No | none |
 
 - `:count-nodes` always walks the whole tree from `/`; there is no path argument. Pick at most one of the three binary modes. It logs `Warning: Missing segment at <path>: …`, `Warning: Missing blob at <path>: …`, and `Warning: Unable to read node <path>: …`.
-- `:remove-nodes` deletes for datastore-consistency lines (`aa/bb/cc/<id>,<path>`), `Missing blob … DataStoreException: Record` lines, and `Unable to read node` lines; a missing DAM original removes the whole asset. **`Missing segment` lines are only logged, never deleted**; the report prints the `:remove-node <path>` to run for each. It refuses paths shallower than depth 3.
+- `:remove-nodes` deletes for `--verbose` consistency-check lines (`aa/bb/cc/<id>,<path>` on a FileDataStore, `aabb-<id>,<path>` on S3/Azure, from `datastore --check-consistency` or `datastorecheck --consistency`), `Missing blob … DataStoreException: Record` lines, and `Unable to read node` lines; a missing DAM original removes the whole asset. **`Missing segment` lines are only logged, never deleted**; the report prints the `:remove-node <path>` to run for each. It refuses paths shallower than depth 3.
 - `:remove-node` refuses `/` and top-level nodes.
 - `:binary-paths` matches external DataStore blobs only. Blobs stored inside segments have no content identity, so they never match.
 

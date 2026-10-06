@@ -278,23 +278,23 @@ This loses the binaries for good. With AEM stopped:
 $ java -jar oak-run-*.jar console --read-write \
     --fds-path /path/to/datastore /path/to/segmentstore
 
-# Input: a copy of the gccand from datastore --check-consistency --verbose,
-# or a :count-nodes log (exact file name, no wildcard)
+# Input: a --verbose consistency result or a :count-nodes log
+# (exact file name, no wildcard)
 > :remove-nodes /safe/place/gccand-1736760000000 dry-run
 > :remove-nodes /safe/place/gccand-1736760000000
 > :exit
 ```
 
-`:remove-nodes` (fork only, see above) removes the node behind each line it recognizes. A missing DAM original removes the whole asset. It refuses paths shallower than depth 3. Which inputs it recognizes depends on your Oak version:
+`:remove-nodes` (fork only, see above) removes the node behind each line it recognizes. A missing DAM original removes the whole asset. It refuses paths shallower than depth 3. It reads, on Oak 1.22 through 2.4:
 
-| Input | Oak 1.22 – 1.88 (AEM 6.5 – LTS SP2) | Oak 2.4 (LTS SP3) |
-|-------|-------------------------------------|-------------------|
-| `gccand` from `datastore --check-consistency --verbose`, FileDataStore | ✅ Removed | ❌ Skipped as `does not exist`: the length field added in Oak 1.90 ends up in the path |
-| `:count-nodes` log, `Missing blob at …` lines | ✅ Removed | ❌ Only counted: the exception moved to `org.apache.jackrabbit.oak.spi.blob.data.DataStoreException` in Oak 2.0, and the command still looks for `org.apache.jackrabbit.core.data` |
-| `[consistency]` from `datastorecheck --consistency --verbose` | ❌ Skipped: its lines name the `jcr:data` property, not a node | ❌ Skipped |
-| S3/Azure lines (`abcd-…`) | ❌ Not recognized | ❌ Not recognized |
+- the `gccand` of `datastore --check-consistency --verbose`, including the length field Oak 1.90+ appends
+- the `[consistency]` file of `datastorecheck --consistency --verbose`, whose lines name the `jcr:data` property: it removes the node that owns it
+- `Missing blob … DataStoreException: Record` lines from a `:count-nodes` log, under either exception package (it moved in Oak 2.0)
+- FileDataStore IDs (`ab/cd/ef/<id>`) and S3/Azure IDs (`abcd-<rest>`)
 
-Read the dry-run report before the real run: a `[SKIP]` line means nothing will happen to that path. For every input it can't use, remove the nodes one at a time with `:remove-node <path>`: the asset for a missing original, the rendition node for a rendition. See [Fork-only console commands](/reference/oak-versions#what-the-commands-actually-do).
+Commands built from the fork before commit `c4103f8` (October 2026) read only FileDataStore `gccand` lines and `:count-nodes` logs, and only up to Oak 1.88: rebuild them with the [recipe](/reference/oak-versions#fork-only-console-commands).
+
+Read the dry-run report before the real run: a `[SKIP]` line means nothing will happen to that path; remove such nodes one at a time with `:remove-node <path>` (the asset for a missing original, the rendition node for a rendition). Results without `--verbose` carry no paths: rerun with `--verbose` to get them. An ID only the non-verbose run reports has no node in HEAD to remove ([why](#find-the-affected-content)). See [Fork-only console commands](/reference/oak-versions#what-the-commands-actually-do).
 
 ### 3. Verify, then find the cause
 
