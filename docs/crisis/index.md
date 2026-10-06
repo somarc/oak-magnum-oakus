@@ -323,7 +323,7 @@ java -jar oak-upgrade-<oak-version>.jar \
     /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
 
-The sidegrade stops at the first unreadable node, so leave known-corrupt paths out with `--exclude-paths`. It copies blob references only; keep the same DataStore or see [Sidegrade](/recovery/sidegrade) to move binaries.
+The sidegrade stops at the first unreadable node, so leave known-corrupt paths out with `--exclude-paths`. The error names only the missing segment, never the path: take the path from `check` (`Error while traversing …`), and exclude the broken node itself, not a child of it (sometimes its parent, when the lost segment held the child's name). With any path option it copies no checkpoints, so each async indexing lane starts over on the first start. It copies blob references only; keep the same DataStore or see [Sidegrade](/recovery/sidegrade) to move binaries.
 
 ```
 [ ] Command extracted SOME content
@@ -385,4 +385,8 @@ Above 1 TB, times grow faster than the size does: plan in days, not in multiples
 
 ::: tip On-Prem Reality
 Production on-premise AEM installations commonly have **500GB-2TB** segment stores after years of content accumulation. A 2TB repository recovery is a **multi-day operation**.
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::
