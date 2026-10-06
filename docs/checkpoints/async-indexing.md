@@ -1,5 +1,10 @@
 # 🔄 Async Indexing and Checkpoints
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 Understanding how async indexing uses checkpoints helps diagnose indexing issues and disk bloat.
 
 ## How Async Indexing Works
@@ -41,7 +46,7 @@ The `/:async` node stores indexer state:
 | `async` | Current checkpoint UUID for "async" lane |
 | `async-LastIndexedTo` | Timestamp of last successful index |
 | `async-temp` | Temporary checkpoints during indexing (1-2 entries is normal) |
-| `async-lease` | Lease expiry (epoch ms) while a run is in progress, removed when the run closes (lease timeout 15 min) |
+| `async-lease` | Lease expiry (epoch ms) while a run is in progress, removed when the run closes (lease timeout 15 min; the value is set 2 × the timeout ahead and renewed while the run traverses) |
 | `fulltext-async` | Checkpoint for fulltext indexing lane |
 
 ::: info Oak 1.22 vs 2.4: checkpoint lifetime
@@ -56,8 +61,10 @@ AEM uses multiple indexing lanes:
 
 | Lane | Purpose | Index Types |
 |------|---------|-------------|
-| `async` | General async indexes | Property indexes |
-| `fulltext-async` | Full-text search | Lucene indexes |
+| `async` | General async indexes | Almost all Lucene indexes (`damAssetLucene`, `cqPageLucene`, `ntBaseLucene`, …) and the `counter` index. Plain `type=property` indexes are synchronous and use no lane |
+| `fulltext-async` | Full-text search | The generic full-text Lucene index `/oak:index/lucene` |
+
+Checked on AEM 6.5.23 (index definitions) and AEM 6.5 LTS SP3 (reindex log). Many `async` indexes also list `nrt` (near-real-time, in memory between runs) on AEM 6.5. Only `async` and `fulltext-async` hold checkpoints.
 
 ## Viewing Indexer Status
 
@@ -69,13 +76,22 @@ http://localhost:4502/system/console/jmx
 Look for: IndexStatsMBean (type=IndexStats, name=<lane>)
 ```
 
+Checkpoint-related attributes: `ReferenceCheckpoint`, `ProcessedCheckpoint` (the in-flight one), `TemporaryCheckpoints` (the in-memory copy of `-temp`, empty after a restart until the first run with changes), `Failing`, `FailingSince`, `ConsecutiveFailedExecutions`, `LatestError`. Operations: `pause()`, `abortAndPause()`, `resume()`.
+
+::: info Oak 1.22 vs 2.4: IndexStats operations
+- **AEM 6.5 (Oak 1.22.x):** lane control is `pause()`, `abortAndPause()`, `resume()` only. A lease left behind by a crashed run blocks the lane until it expires.
+- **AEM 6.5 LTS SP3 (Oak 2.4.0):** adds `releaseLeaseForPausedLane()` *(since Oak 1.42)* and `forceIndexLaneCatchup("CONFIRM")` *(since Oak 1.66)*, which moves a failing lane to a new checkpoint at HEAD (Oak 1.66–1.82 refuse a lane that isn't failing; since Oak 1.84 it moves any lane, healthy ones included) ([Checkpoint Advancement](/checkpoints/checkpoint-advancement)).
+:::
+
 ### Via oak-run
 
 ```bash
 $ java -jar oak-run-*.jar console /path/to/segmentstore
 
-> :cd /:async
-> :pn
+# The node commands have no colon: `cd`, `ls`, `pn` (`:cd` is a Groovy syntax error)
+/> cd /:async
+/:async> pn
+{ async-temp = [...], async = ..., fulltext-async = ..., async-LastIndexedTo = ... }
 ```
 
 ## Common Issues
@@ -97,9 +113,9 @@ $ java -jar oak-run-*.jar console /path/to/segmentstore
 
 ### Temp Checkpoints Accumulating
 
-**Symptom**: `async-temp` has more than 2 entries
+**Symptom**: `async-temp` has more than 2 entries that still exist in `checkpoints list`, and the lane is failing (stale entries alone are normal on a busy store: [why](/checkpoints/#death-loop-detection))
 
-**Cause**: Oak failing to release checkpoints (each entry whose `release()` fails is kept)
+**Cause**: Oak failing to release checkpoints (each entry whose `release()` fails is kept). `release()` fails whenever another commit holds the store's commit lock, so during busy write periods the list grows with IDs of checkpoints that are already gone. Compare with `oak-run checkpoints list`: only entries that still exist cost disk space
 
 **Solution**: See [Death Loop](/checkpoints/death-loop)
 
@@ -109,5 +125,9 @@ $ java -jar oak-run-*.jar console /path/to/segmentstore
 1. **Each lane has its own checkpoint** - Multiple indexers, multiple checkpoints
 2. **Checkpoints pin segments** - Until indexer releases them
 3. **/:async stores state** - Check here for indexer health
-4. **Temp checkpoints = problems** - Normally 1-2 entries; more means releases are failing
+4. **Temp checkpoints = problems** - Normally 1-2 entries; more means releases are failing. A problem when those checkpoints still exist
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

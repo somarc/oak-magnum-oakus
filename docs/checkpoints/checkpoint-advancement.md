@@ -1,5 +1,10 @@
 # 🔧 Checkpoint Advancement: The Nuclear Option
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 When async indexing is frozen for weeks/months and standard fixes don't work, **checkpoint advancement** skips the problematic historical delta and restarts indexing from current HEAD.
 
 ::: warning ⚠️ When to Use This
@@ -98,7 +103,7 @@ Month 4-6: Death loop
 **The key insight**: Detection tools traverse the **current JCR tree** (HEAD revision). Old segments pinned by checkpoints are **not part of the current tree** - they're historical snapshots that only the indexer sees when it reads from an old checkpoint.
 
 ::: warning What the Oak code actually does (Oak 1.22 and 2.4)
-On TarMK, neither `datastorecheck --consistency` without `--verbose` nor DataStore GC walks the tree from HEAD. Both collect blob IDs through `SegmentBlobReferenceRetriever`, which reads the binary-reference index of every tar file for all GC generations that are not reclaimable. Compaction rewrites every checkpoint into the current generation, so blobs that only a checkpoint references are included. DataStore GC keeps them, and `datastorecheck` reports them if they are missing. If "0 missing blobs" and `DataStoreException` occur together, something other than this repository's DataStore GC removed the blob (for example, manual deletion or a shared DataStore swept without this repository's references). Treat the "Month 3" step above as a hypothesis, not as Oak behavior. `--verbose` changes this: with it, `datastorecheck --consistency` and `datastore --check-consistency` walk HEAD from `/` and miss blobs that only a checkpoint references (tested on Oak 1.22.24 and 2.4.0). The key insight holds for `count-nodes` and for every `--verbose` run ([what each check can see](/datastore/consistency#what-each-check-can-see)).
+On TarMK, neither `datastorecheck --consistency` without `--verbose` nor DataStore GC walks the tree from HEAD. Both collect blob IDs through `SegmentBlobReferenceRetriever`, which reads the binary-reference index of every tar file for all GC generations that are not reclaimable. Compaction rewrites every checkpoint into the current generation, so blobs that only a checkpoint references are included. DataStore GC keeps them, and `datastorecheck` reports them if they are missing. If "0 missing blobs" and `DataStoreException` occur together, something other than this repository's DataStore GC removed the blob (for example, manual deletion, or a shared DataStore swept without this repository's references: a cloned environment that kept this repository's ID does exactly that, see [Cloned Environments Sharing a DataStore](/datastore/gc#cloned-environments)). Lucene Binaries Cleanup (active deletion) doesn't remove them either: it purges only index files that Lucene discarded before min(now − 24 h, creation time of the oldest checkpoint), so an old checkpoint moves that cutoff back with it (`ActiveDeletedBlobCollectorMBeanImpl.getSafeTimestampForDeletedBlobs`, identical in 1.22.24 and 2.4.0). Treat the "Month 3" step above as a hypothesis, not as Oak behavior. `--verbose` changes this: with it, `datastorecheck --consistency` and `datastore --check-consistency` walk HEAD from `/` and miss blobs that only a checkpoint references (tested on Oak 1.22.24 and 2.4.0). The key insight holds for `count-nodes` and for every `--verbose` run ([what each check can see](/datastore/consistency#what-each-check-can-see)).
 :::
 
 ## The Solution: Checkpoint Advancement
@@ -107,7 +112,9 @@ On TarMK, neither `datastorecheck --consistency` without `--verbose` nor DataSto
 
 ::: info Oak 1.22 vs 2.4
 - **AEM 6.5 (Oak 1.22.x):** no built-in operation. Use the offline procedure below.
-- **AEM 6.5 LTS SP3 (Oak 2.4.0):** the IndexStats MBean of each lane has `forceIndexLaneCatchup` *(since Oak 1.66)*. Pass `CONFIRM` as the argument. It runs only while the lane is failing (otherwise it returns "The lane is not failing…"). It calls `abortAndPause()` and releases the lease, creates a new checkpoint, sets `/:async@<lane>` to it, releases the old reference checkpoint, and resumes the lane, all online. Reindexing is still required afterwards (Phase 6). See [which LTS SP has which Oak](/reference/oak-versions).
+- **AEM 6.5 LTS SP3 (Oak 2.4.0):** the IndexStats MBean of each lane has `forceIndexLaneCatchup` *(since Oak 1.66)*. Pass `CONFIRM` as the argument. It calls `abortAndPause()` and releases the lease, creates a new checkpoint, sets `/:async@<lane>` to it, releases the old reference checkpoint, and resumes the lane, all online. Reindexing is still required afterwards (Phase 6). See [which LTS SP has which Oak](/reference/oak-versions).
+  - In Oak 1.66 to 1.82 (AEM 6.5 LTS GA runs 1.68) it refuses a lane that isn't failing: "The lane is not failing…". Since Oak 1.84 (OAK-11729), and so on 2.4.0, it runs on **any** lane, a healthy one included. Check `Failing` first.
+  - It leaves `-temp` and `<lane>-LastIndexedTo` alone. The new checkpoint carries `name` = `<lane>-forceModified`, and the lane's next successful run replaces and releases it. Lab (2.4.0): a failing lane and a healthy lane were both forced, and content from the skipped delta stayed out of the index.
 :::
 
 ### Phase 1: Pre-Flight Validation
@@ -130,7 +137,10 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 
 ```bash
 # Check for missing blobs in CURRENT repository state
-java -jar oak-run-*.jar datastorecheck --consistency \
+# --verbose walks HEAD only, which is what this step needs. Without it the check
+# also reports blobs that only the old checkpoint references: the very blobs this
+# procedure skips, and count-nodes + remove-nodes can't reach them
+java -jar oak-run-*.jar datastorecheck --consistency --verbose \
   --fds /path/to/FileDataStore.config \
   --store /path/to/segmentstore \
   --repoHome /path/to/crx-quickstart/repository \
@@ -154,6 +164,8 @@ Look for:
 ├─ ConsecutiveFailedExecutions: High number (100+) ← Death loop
 └─ Status: failing / running (but not progressing)
 ```
+
+`Status` is set to `running` when a run starts and changes only when a run completes. A lane that throws on every run therefore stays at `running`. `failing` means runs do complete, but an index of the lane is failing or isolated as corrupt (see [Let Oak Skip Failing Indexes](/checkpoints/death-loop#let-oak-skip-failing-indexes)).
 
 ### Phase 2: Pause Indexing Lanes
 
@@ -185,10 +197,11 @@ tail -f crx-quickstart/logs/error.log
 ```bash
 java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 
-# Output example:
+# Output example (Oak 2.4: lane checkpoints expire 100 days after creation
+# (since Oak 1.66); on AEM 6.5 / Oak 1.22 it's 1000 days, here 2028-02-20):
 # Checkpoints /path/to/segmentstore
 # - 4ce77270-a456-4b6c-b8d7-7f6e8a9b1c2d created 2025-05-26 10:12:01.123 expires 2025-09-03 10:12:01.123   (OLD!)
-# - 5be6e6eb-8875-42af-a3b4-1c2d3e4f5g6h created 2025-05-26 10:12:05.456 expires 2025-09-03 10:12:05.456   (OLD!)
+# - 5be6e6eb-8875-42af-a3b4-1c2d3e4f5a6b created 2025-05-26 10:12:05.456 expires 2025-09-03 10:12:05.456   (OLD!)
 # Found 2 checkpoints
 
 # SAVE these UUIDs for cleanup later
@@ -197,10 +210,13 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 #### 3.3: Create New Checkpoints at HEAD (one per lane)
 
 ```bash
-# --read-write is required: in read-only mode the checkpoint is not persisted
+# --read-write is required: in read-only mode the checkpoint is not persisted.
+# A read-only console still prints "Checkpoint created: <id>" (after logging
+# "Failed to create checkpoint ... Cannot write to read-only store"), and that ID doesn't exist
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 
-# In console, create one checkpoint per lane, 100-day lifetime (argument is in seconds):
+# In console, create one checkpoint per lane, 100-day lifetime (argument is in seconds;
+# 100 days is what Oak 2.4 lanes use, Oak 1.22 lanes use 1000 days = 86400000):
 :checkpoint 8640000
 :checkpoint 8640000
 
@@ -209,6 +225,8 @@ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 
 :exit
 ```
+
+The lifetime only matters while the lane is still stuck. The lane's first successful run after Phase 5 moves `/:async@<lane>` to a checkpoint of its own and releases this one. If the lane stays stuck past the lifetime, Oak removes the expired checkpoint the next time anything creates a checkpoint, and the lane then re-runs the initial index update (a full reindex of that lane). These console checkpoints carry no properties, so `checkpoints info` shows nothing for them.
 
 ::: warning Do not share one checkpoint between lanes
 After its first successful run, a lane releases its previous reference checkpoint. If `async` and `fulltext-async` point to the same checkpoint, the first lane to succeed deletes it. The other lane then logs `Failed to retrieve previously indexed checkpoint …; re-running the initial index update` and traverses the whole repository.
@@ -301,7 +319,7 @@ Do NOT paste the script line-by-line. Always use `:load` to execute the script f
 ```bash
 # Use the UUIDs from Phase 3.2
 java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm 4ce77270-a456-4b6c-b8d7-7f6e8a9b1c2d
-java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm 5be6e6eb-8875-42af-a3b4-1c2d3e4f5g6h
+java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm 5be6e6eb-8875-42af-a3b4-1c2d3e4f5a6b
 
 # Verify only new checkpoint remains:
 java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
@@ -318,7 +336,8 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 → IndexStats → fulltext-async → resume()
 
 # Verify:
-├─ ReferenceCheckpoint: 5e69054a-... (NEW checkpoint!) ✅
+├─ ReferenceCheckpoint: not one of the Phase 3.2 UUIDs ✅ (after the first run with changes it is the
+│  lane's own new checkpoint, and the Phase 3.3 one has been released)
 ├─ LastIndexedTime: Current timestamp ✅
 ├─ ConsecutiveFailedExecutions: 0 ✅
 ├─ Status: done / running (not failing) ✅
@@ -346,6 +365,8 @@ This means:
 ❌ Pages created May 27 → Oct 10: NOT searchable  
 ✅ New content after Oct 10: WILL be indexed correctly
 ```
+
+We ran the offline steps (1.1, 1.2, 3.2, 3.3, 4.1–4.3) exactly as written on Oak 1.22.24 and 2.4.0 and simulated the Phase 5 restart with fresh indexer instances. The lab used both lanes failing on a node in the delta and content added inside and after that delta. Afterwards both lanes ran without errors, and the old checkpoints were gone. The first successful run released the Phase 3.3 checkpoints. Content from the delta stayed out of the indexes until `reindex=true` was set on them.
 
 #### Reindexing Strategy Options
 
@@ -376,6 +397,7 @@ curl -u admin:admin -X POST \
 
 ```bash
 # Run monthly to prevent old checkpoint accumulation
+# (AEM stopped: with AEM running it waits for repo.lock and hangs)
 java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm-unreferenced
 ```
 
@@ -387,6 +409,8 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 
 # Old checkpoints are a ticking time bomb for invisible blobs
 ```
+
+`checkpoints list` needs AEM stopped: it waits for `repo.lock` and hangs on a running instance (tested on Oak 1.22.24 and 2.4.0). Online, use the `CheckpointManager` MBean ("Segment node store checkpoint management"): `listCheckpoints()` or the `OldestCheckpointCreationDate` attribute. A lane on an idle repository legitimately keeps an old checkpoint, because it creates a new one only when content changed ("No changes since last checkpoint; skipping the index update").
 
 ### Monitor Indexing Health
 
@@ -404,4 +428,8 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 4. **Always validate segment store first** - Don't manipulate checkpoints on corrupt repos
 5. **Plan for reindexing** - Budget time for index reconciliation after advancement
 6. **Prevention is key** - Regular checkpoint cleanup prevents this scenario
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

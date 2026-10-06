@@ -13,7 +13,7 @@ A **checkpoint** in Oak is a snapshot of the repository state at a specific poin
 Disk usage growing despite compaction running
 "Failed to retrieve previously indexed checkpoint" in error.log
 Dozens of checkpoints in oak-run checkpoints list
-async-temp array keeps growing (more than 2 entries)
+async-temp array keeps growing (more than 2 entries that still exist in checkpoints list)
 Indexing stuck for weeks/months (ConsecutiveFailedExecutions high)
 ```
 
@@ -23,6 +23,19 @@ Indexing stuck for weeks/months (ConsecutiveFailedExecutions high)
 - Stored as a segment reference in the FileStore
 - **Prevents garbage collection** from reclaiming content reachable from that checkpoint (compaction copies it forward)
 - Created by async indexers, backup tools, or manually
+- **Has a lifetime**: `timestamp` is its expiry date. An expired checkpoint is deleted only when the next checkpoint is created. Compaction copies expired checkpoints forward like any other, and on a stopped store nothing deletes them
+
+### Who Creates Them, and Who Releases Them {#who-creates-them}
+
+`oak-run checkpoints <store> info <id>` prints the `properties` metadata, which tells you who created a checkpoint (same in Oak 1.22 and 2.4):
+
+| Creator | `info` shows | Lifetime | Released by |
+|---------|--------------|----------|-------------|
+| Async indexing lane | `creator AsyncIndexUpdate`, `name <lane>`, `created`, `thread` | 1000 days (Oak 1.22); 100 days *(since Oak 1.66)* ([details](/checkpoints/async-indexing)) | The lane itself: the previous reference after each successful run, its own new checkpoint after a failed run, plus an orphan cleanup every 5 minutes of its own older checkpoints (skipped while the lane is failing) |
+| `oak-run index` (out-of-band reindex) | `creator IndexCommand`, `created` | 100 days | The index import, at its end |
+| `CheckpointManager` `createCheckpoint`, `RepositoryManagement` `checkpoint`, console `checkpoint` | nothing | What the caller passed (console default: 1 hour) | Nobody: `releaseCheckpoint`, `oak-run checkpoints rm`, or expiry |
+
+The lane's orphan cleanup only touches checkpoints with `creator AsyncIndexUpdate` and its own lane name. Everything else lives until someone removes it or it expires and another checkpoint gets created.
 
 ## Checkpoint Architecture
 
@@ -50,7 +63,7 @@ Segment Store Root (/)
 - **Checkpoints exist OUTSIDE the JCR tree** - parallel to `/root`, not inside it
 - **`/:async` properties are just string pointers** - references to checkpoint UUIDs
 - **The actual checkpoint data lives in `/checkpoints`** - contains revision references
-- **Checkpoint size indicates age** - large size = old checkpoint pinning many segments
+- **Checkpoint size indicates age** - more precisely: `oak-run explore` shows a checkpoint as `<id> (direct;linked)`. *direct* counts content the checkpoint does not share with HEAD (or with a checkpoint counted before it), *linked* the shared part. A large *direct* size means a checkpoint pinning content HEAD no longer has, usually an old one. DataStore binaries are not counted
 :::
 
 ### Why This Separation Matters
@@ -72,7 +85,7 @@ Segment Store Root (/)
 Benefits:
 ✅ Checkpoints don't clutter JCR namespace
 ✅ Checkpoints managed independently from content
-✅ Checkpoint operations don't create new JCR revisions
+✅ Checkpoint operations don't change the JCR tree (each one still writes a new head record)
 ✅ GC can iterate checkpoints without traversing entire JCR tree
 ✅ Low-level operations isolated from user content
 ```
@@ -81,7 +94,7 @@ Benefits:
 
 ```
 /:async@async = "b8dbd53c-af46-4764-bd3b-df48d4a85438"
-         ↓ (JCR property references checkpoint by UUID)
+         ↓ (hidden Oak property, not visible via JCR, references checkpoint by UUID)
 /checkpoints/b8dbd53c-af46-4764-bd3b-df48d4a85438/
          ↓ (checkpoint node contains revision reference)
 Record: d2afc549-c5a2-4475-a2d1-7257dabba2fd.00000007
@@ -106,7 +119,8 @@ The `/:async` node (visible in oak-run explore) shows indexer state:
 ├─ async-temp = {STRINGS} (count 2) ["uuid1", "uuid2"]
 │  └─ Temporary checkpoints created during indexing cycles
 │     1-2 UUIDs = healthy (current reference + previous or in-flight one)
-│     Growing list = Oak keeps failing to release these checkpoints
+│     Growing list = release() keeps failing for these IDs
+│     (some may name checkpoints that are already gone)
 │
 ├─ fulltext-async = {STRING} "5be6e6eb-8875-405f-b157-a869080cb859"
 │  └─ Current checkpoint UUID for "fulltext-async" lane
@@ -116,13 +130,14 @@ The `/:async` node (visible in oak-run explore) shows indexer state:
 │
 └─ fulltext-async-temp = {STRINGS} (count 13) [...]
    └─ 13 entries = checkpoints Oak repeatedly failed to release!
-      This is the DEATH LOOP signature
+      This is the DEATH LOOP signature when the lane is also failing
+      and the IDs still exist (see the warning below)
 ```
 
 ### Death Loop Detection
 
 ::: danger 🔥 Death Loop Signature
-If you see `async-temp` or `fulltext-async-temp` with **more than 2 UUIDs**, you have a death loop:
+If you see `async-temp` or `fulltext-async-temp` with **more than 2 UUIDs** that still exist in `checkpoints list`, **and** the lane is failing (`Failing`, `FailingSince`, `ConsecutiveFailedExecutions` in its IndexStats MBean), you have a death loop:
 
 ```
 fulltext-async-temp = {STRINGS} (count 13) [
@@ -134,11 +149,15 @@ fulltext-async-temp = {STRINGS} (count 13) [
 
 **What this means:**
 - Every run adds its new checkpoint to `-temp` and tries to release all other entries except the lane's reference checkpoint
-- An entry stays only when `release()` returned `false`, so the checkpoint still exists
+- An entry stays only when `release()` returned `false`. That happens whenever another commit holds the store's commit lock, so the entry may name a checkpoint that is already gone
 - The lane's periodic orphan cleanup keeps every `-temp` entry and is skipped while the lane is failing
 - Each leftover checkpoint keeps its content alive through compaction, so disk bloat grows
 
 A failed run on its own does **not** leak a checkpoint: `AsyncIndexUpdate` releases the checkpoint it just created in its `finally` block.
+:::
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+`release()` on TarMK tries the store's commit lock five times without waiting. While any other commit is running, it returns `false`, for an existing checkpoint and for one that no longer exists alike. With the lock free, it returns `true`, also for an ID that doesn't exist. So `-temp` entries pile up during busy write periods and are dropped by the next indexing run that gets the lock. An idle AEM 6.5.23 store we checked had 8 `async-temp` entries while the lane was healthy: 7 named checkpoints that no longer existed, and the store held just 2 checkpoints. Count checkpoints, not `-temp` entries: `oak-run checkpoints list` offline, `CheckpointManager` → `listCheckpoints()` online.
 :::
 
 ## How Checkpoints Pin Segments
@@ -187,6 +206,12 @@ Compaction + Cleanup:
 Result: old content (potentially gigabytes) that should have been reclaimed survives every compaction
 ```
 
+Reproduced on Oak 1.22.24 and 2.4.0: 20 MB written, checkpointed, then deleted. Offline `compact` kept the store at 21.1 MB. After `checkpoints rm-unreferenced`, the next `compact` took it to 5.4 kB.
+
+::: tip 💡 The DataStore angle
+A checkpoint pins blobs, not only segments. DataStore GC marks every blob a checkpoint references. On a running AEM, the oldest checkpoint also narrows the sweep: no blob newer than the oldest checkpoint (minus `maxAge`) is deleted, referenced or not ([the cutoff](/datastore/gc#the-cutoff)). One forgotten checkpoint from last spring keeps every binary uploaded since last spring, deleted or not. And a missing blob that only a checkpoint references shows up only in consistency checks run **without** `--verbose` ([what each check can see](/datastore/consistency#what-each-check-can-see)). That is exactly what an async lane reads when it resumes from an old checkpoint.
+:::
+
 ## Managing Checkpoints
 
 ### List Checkpoints
@@ -194,6 +219,10 @@ Result: old content (potentially gigabytes) that should have been reclaimed surv
 ```bash
 java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 ```
+
+::: warning AEM must be stopped
+Every `checkpoints` operation, `list` included, opens the store read-write and takes `repo.lock`. Against a running AEM it doesn't fail: it waits silently until AEM stops (tested on Oak 1.22.24 and 2.4.0). Online, use JMX instead: the `CheckpointManager` MBean ("Segment node store checkpoint management") → `listCheckpoints()` (id, created, expires, properties), `OldestCheckpointCreationDate`, `createCheckpoint(lifetime in ms)`, `releaseCheckpoint(id)`. Same in Oak 1.22 and 2.4. The daily revision GC also logs every checkpoint it compacts: `TarMK GC #N: found checkpoint <id> created at <date>.` (Oak 1.22; `created on` since Oak 1.60).
+:::
 
 ### Remove Unreferenced Checkpoints
 
@@ -204,7 +233,7 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm-unreferenced
 **What this does:**
 1. Scans `/checkpoints` for all repository checkpoints
 2. Keeps every checkpoint referenced by a `/:async` STRING property whose name ends in `async` (e.g. `async`, `fulltext-async`), printing `Referenced checkpoint from /:async@<name> is <id>`
-3. **Removes all other checkpoints**, including those listed only in `*-temp` arrays, and prints `Removed N checkpoints in Xms.`
+3. **Removes all other checkpoints**, including those listed only in `*-temp` arrays, and prints `Removed N checkpoints in Xms.` A store without a `/:async` node loses every checkpoint
 4. The next compaction no longer copies their content forward
 
 **Why this is safe:**
@@ -225,16 +254,17 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore rm-unreferenced
 - Corruption detected but not analyzed
 - Right after backup (backup tools create checkpoints)
 - Custom checkpoint usage for testing
+- An out-of-band reindex is in progress: its checkpoint is not referenced from `/:async`, and without it the import fails with `Cannot retrieve checkpointed state [<id>]`
 
 ## Checkpoint Commands Reference
 
 | Command | Description |
 |---------|-------------|
-| `list` | Show all checkpoints (`- <id> created <time> expires <time>`) |
+| `list` | Show all checkpoints (`- <id> created <time> expires <time>`, local time, not sorted). The default when no operation is given |
 | `rm-all` | ⚠️ DANGEROUS - Removes ALL checkpoints |
 | `rm-unreferenced` | Safe - Removes only orphaned checkpoints |
 | `rm <checkpoint>` | Remove specific checkpoint by UUID |
-| `info <checkpoint>` | Show metadata for specific checkpoint |
+| `info <checkpoint>` | Show metadata (`name<TAB>value` per line; nothing for a checkpoint without metadata) |
 | `set <checkpoint> <name> [<value>]` | Set/remove metadata property |
 
 ::: danger ⚠️ NEVER Use `rm-all`
@@ -264,7 +294,11 @@ After rm-unreferenced + next cleanup:
 - **Checkpoints exist OUTSIDE the JCR tree** - parallel to `/root`, not inside it
 - **`/:async` properties are just string pointers** - references to checkpoint UUIDs
 - **The actual checkpoint data lives in `/checkpoints`** - contains revision references
-- **Checkpoint size indicates age** - large size = old checkpoint pinning many segments
-- **Temp checkpoint accumulation = failed releases** - visible in `async-temp` arrays
+- **Checkpoint size indicates age** - the *direct* size in `oak-run explore` is what it pins beyond HEAD, usually large for old checkpoints
+- **Temp checkpoint accumulation = failed releases** - visible in `async-temp` arrays; check which IDs still exist
 - **Removing `/:async` properties deletes only the pointers, not the checkpoints** - but a lane with no `/:async@<lane>` value re-runs its initial index update (full traversal)
 - **Use oak-run explore to see checkpoints** - not visible in CRXDE or JCR API
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
+:::
