@@ -296,7 +296,7 @@ $ java -jar oak-run-*.jar console --read-write \
 - `Missing blob … DataStoreException: Record` lines from a `:count-nodes` log, under either exception package (it moved in Oak 2.0)
 - FileDataStore IDs (`ab/cd/ef/<id>`) and S3/Azure IDs (`abcd-<rest>`)
 
-Commands built from the fork before commit `c4103f8` (October 2026) read only FileDataStore `gccand` lines and `:count-nodes` logs, and only up to Oak 1.88: rebuild them with the [recipe](/reference/oak-versions#fork-only-console-commands).
+Commands built from the fork before commit `c4103f8` (October 2026) read only FileDataStore `gccand` lines and `:count-nodes` logs, and only up to Oak 1.88; builds before `cf88588` also skip `:count-nodes` lines written in a `--read-write` console. Rebuild them with the [recipe](/reference/oak-versions#fork-only-console-commands).
 
 Read the dry-run report before the real run: a `[SKIP]` line means nothing will happen to that path; remove such nodes one at a time with `:remove-node <path>` (the asset for a missing original, the rendition node for a rendition). Results without `--verbose` carry no paths: rerun with `--verbose` to get them. An ID only the non-verbose run reports has no node in HEAD to remove ([why](#find-the-affected-content)). See [Fork-only console commands](/reference/oak-versions#what-the-commands-actually-do).
 
@@ -391,8 +391,8 @@ references-aaaa-1111-2222-3333-444444444444_<uuid>  ← aaaa-1111 has marked
 ```bash
 # Offline, AEM stopped
 $ java -jar oak-run-*.jar console /path/to/segmentstore
-> :cd /:clusterConfig
-> :pn
+> cd /:clusterConfig
+> pn
 ```
 
 Two instances with the same `:clusterId` share one marker. A marker that no instance claims is stale.
@@ -415,7 +415,7 @@ $ java -jar oak-run-*.jar resetclusterid /path/to/segmentstore
 # Start AEM: it generates a new cluster ID and registers repository-<new id>
 $ ./crx-quickstart/bin/start
 
-# Verify the new ID offline (console: :cd /:clusterConfig, :pn)
+# Verify the new ID offline (console: `cd /:clusterConfig`, `pn`)
 ```
 
 Do **not** delete `repository-<old id>` here: the original instance still uses it.

@@ -1,5 +1,10 @@
 # 💾 DataStore Tools
 
+::: info 🎯 Scope
+SegmentStore (TarMK) with an external DataStore (File, S3, Azure) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 The DataStore stores binary content (images, PDFs, videos) separately from the segment store.
 
 ## DataStore Types
@@ -115,3 +120,7 @@ There is no separate `mark`/`sweep` sub-command: `--collect-garbage [markOnly]` 
 - [Consistency Check](/datastore/consistency) - Verify blob integrity
 - [Garbage Collection](/datastore/gc) - Reclaim blob storage space
 - [Pre-Text Extraction](/recovery/pre-text-extraction) - Take binary reads off the reindex's critical path
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
+:::
