@@ -152,7 +152,7 @@ failingIndexTimeoutSeconds=1800   # 0 disables it
 
 ## When Standard Fixes Don't Work
 
-If you've tried the above and indexing still fails with "0 missing blobs" but repeated `DataStoreException` errors, you may have **invisible missing blobs** - blobs that were deleted from DataStore but are still referenced in old segments pinned by checkpoints. (On TarMK, `datastorecheck --consistency` also reads checkpoint references - see the caveat on that page.)
+If you've tried the above and indexing still fails with "0 missing blobs" but repeated `DataStoreException` errors, you may have **invisible missing blobs** - blobs that were deleted from DataStore but are still referenced in old segments pinned by checkpoints. (On TarMK, `datastorecheck --consistency` without `--verbose` also reads checkpoint references - see the caveat on that page.)
 
 **See**: [Checkpoint Advancement](/checkpoints/checkpoint-advancement) for the advanced procedure to skip the problematic historical delta.
 

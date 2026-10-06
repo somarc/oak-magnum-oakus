@@ -91,14 +91,14 @@ Month 4-6: Death loop
 
 | Tool | What It Does | Why It Misses Invisible Blobs |
 |------|--------------|-------------------------------|
-| `datastorecheck --consistency` | Reads the binary-reference index of every tar file (all retained GC generations) | ⚠️ Does **not** miss them on TarMK - see below |
+| `datastorecheck --consistency` | Without `--verbose`: reads the binary-reference index of every tar file (all retained GC generations). With `--verbose`: walks HEAD | ⚠️ Without `--verbose` it does **not** miss them on TarMK; with `--verbose` it does - see below |
 | `count-nodes deep` | Reads blobs from HEAD | Old segments not traversed |
 | `oak-run check` | Validates segment graph | Doesn't check DataStore blobs |
 
 **The key insight**: Detection tools traverse the **current JCR tree** (HEAD revision). Old segments pinned by checkpoints are **not part of the current tree** - they're historical snapshots that only the indexer sees when it reads from an old checkpoint.
 
 ::: warning What the Oak code actually does (Oak 1.22 and 2.4)
-On TarMK, neither `datastorecheck --consistency` nor DataStore GC walks the tree from HEAD. Both collect blob IDs through `SegmentBlobReferenceRetriever`, which reads the binary-reference index of every tar file for all GC generations that are not reclaimable. Compaction rewrites every checkpoint into the current generation, so blobs that only a checkpoint references are included. DataStore GC keeps them, and `datastorecheck` reports them if they are missing. If "0 missing blobs" and `DataStoreException` occur together, something other than this repository's DataStore GC removed the blob (for example, manual deletion or a shared DataStore swept without this repository's references). Treat the "Month 3" step above as a hypothesis, not as Oak behavior. The key insight holds only for `count-nodes`.
+On TarMK, neither `datastorecheck --consistency` without `--verbose` nor DataStore GC walks the tree from HEAD. Both collect blob IDs through `SegmentBlobReferenceRetriever`, which reads the binary-reference index of every tar file for all GC generations that are not reclaimable. Compaction rewrites every checkpoint into the current generation, so blobs that only a checkpoint references are included. DataStore GC keeps them, and `datastorecheck` reports them if they are missing. If "0 missing blobs" and `DataStoreException` occur together, something other than this repository's DataStore GC removed the blob (for example, manual deletion or a shared DataStore swept without this repository's references). Treat the "Month 3" step above as a hypothesis, not as Oak behavior. `--verbose` changes this: with it, `datastorecheck --consistency` and `datastore --check-consistency` walk HEAD from `/` and miss blobs that only a checkpoint references (tested on Oak 1.22.24 and 2.4.0). The key insight holds for `count-nodes` and for every `--verbose` run ([what each check can see](/datastore/consistency#what-each-check-can-see)).
 :::
 
 ## The Solution: Checkpoint Advancement
@@ -398,7 +398,7 @@ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 ## Key Takeaways
 
 ::: tip Remember
-1. **"0 missing blobs" can still mean indexing fails** - `count-nodes` only sees current HEAD (on TarMK, `datastorecheck --consistency` also covers checkpoints)
+1. **"0 missing blobs" can still mean indexing fails** - `count-nodes` only sees current HEAD (on TarMK, `datastorecheck --consistency` without `--verbose` also covers checkpoints)
 2. **Old checkpoints pin old segments** - Which may reference deleted DataStore blobs
 3. **Checkpoint advancement skips the problem** - But leaves index data stale
 4. **Always validate segment store first** - Don't manipulate checkpoints on corrupt repos
