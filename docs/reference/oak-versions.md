@@ -33,7 +33,7 @@ AEM 6.5 LTS does **not** stay on one Oak line: each service pack moves it forwar
 
 | Not covered | Why |
 |-------------|-----|
-| **Oak 2.6+** (current Apache trunk) | Not shipped in any AEM 6.5 release yet. Flags and defaults keep changing. |
+| **Oak 2.6.0+** (newer Apache releases and trunk) | Not shipped in any AEM 6.5 release yet. Flags and defaults keep changing. |
 | **Oak versions older than 1.22** | Not verified against this guide. |
 | **AEMaaCS** | No filesystem access; Adobe operates the repository. |
 | **DocumentNodeStore** (MongoMK / RDB) | Different persistence. None of the TarMK procedures apply. |
@@ -95,7 +95,7 @@ Everything not listed here behaves the same at both ends of the range. "Changed 
 
 ## 🍴 Fork-Only Console Commands {#fork-only-console-commands}
 
-`:count-nodes`, `:remove-nodes`, `:remove-node`, and `:binary-paths` are **not part of Apache Jackrabbit Oak (any version)**. Their source lives in the community fork [somarc/jackrabbit-oak](https://github.com/somarc/jackrabbit-oak), branch `feature/oak-run`. That branch builds oak-run `1.93-SNAPSHOT`, which matches no AEM release, so don't run it as-is. Instead, add the four commands to the Apache oak-run release that matches your `oak-core`.
+`:count-nodes`, `:remove-nodes`, `:remove-node`, and `:binary-paths` are **not part of Apache Jackrabbit Oak (any version)**. Their source lives in the community fork [somarc/jackrabbit-oak](https://github.com/somarc/jackrabbit-oak), branch `feature/oak-run` ([command source](https://github.com/somarc/jackrabbit-oak/tree/feature/oak-run/oak-run/src/main/groovy/org/apache/jackrabbit/oak/console/commands)). The branch itself is an unreleased Oak development snapshot, not a release, so its oak-run matches no AEM release. Don't run it as-is. Instead, add the four commands to the Apache oak-run release that matches your `oak-core`.
 
 The recipe below has been built and smoke-tested (count, dry-run, delete) on Oak 1.22.24, 1.68.0, 1.78.0, 1.88.0, and 2.4.0, the full AEM 6.5 / 6.5 LTS range.
 
