@@ -192,10 +192,31 @@
   color: var(--oak-green);
 }
 
-/* Navigation */
+/* Navigation. The blur sits on the bar, not on .VPNav: a backdrop-filter makes .VPNav the
+   containing block of the fixed ☰ menu panel (#VPNavScreen), which then collapses to 0px. */
 .dark .VPNav {
-  backdrop-filter: blur(12px);
   border-bottom: 1px solid rgba(74, 222, 128, 0.1);
+}
+
+.dark .VPNavBar {
+  backdrop-filter: blur(12px);
+}
+
+/* The seven nav links need ~1230px, but VitePress shows them inline from 768px, so they overflow
+   (phones in landscape, tablets, small laptops). Keep the ☰ menu until VitePress's 1280px step. */
+@media (min-width: 768px) and (max-width: 1279px) {
+  .VPNav .VPNavBar .VPNavBarMenu,
+  .VPNav .VPNavBar .VPNavBarExtra {
+    display: none;
+  }
+
+  .VPNav .VPNavBar .VPNavBarHamburger {
+    display: flex;
+  }
+
+  #VPNavScreen {
+    display: block;
+  }
 }
 
 .dark .VPSidebar {
