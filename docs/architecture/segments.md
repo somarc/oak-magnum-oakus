@@ -1,5 +1,10 @@
 # 📦 Segments: The Atomic Unit
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 Segments are the **fundamental building blocks** of Oak's SegmentStore. Understanding them is key to understanding why corruption behaves the way it does.
 
 ## What is a Segment?
@@ -9,7 +14,7 @@ A segment is a self-contained block of repository data with these properties:
 | Property | Value | Why It Matters |
 |----------|-------|----------------|
 | **Size** | Up to 256 KiB | Cache-friendly, efficient I/O |
-| **ID** | UUID (e.g., `a1b2c3d4-...`) | Unique identifier for lookups; the top 4 bits of the UUID's low half mark a **data** (`0xA`) vs. **bulk**/binary-only (`0xB`) segment |
+| **ID** | UUID (e.g., `a1b2c3d4-...`) | Unique identifier for lookups; the top 4 bits of the UUID's low half mark a **data** (`0xA`) vs. **bulk**/binary-only (`0xB`) segment. It is the first hex digit of the 4th group: `…-a4e5-…` is data, `…-b651-…` is bulk |
 | **Immutable** | Once written, never changed | Fast reads, but can't repair corruption |
 | **Location** | Inside TAR files | Sequential storage for efficiency |
 
@@ -36,8 +41,8 @@ Contents:
 | Type | Purpose | Example |
 |------|---------|---------|
 | **Node Record** (`NODE`) | JCR node structure: template id, child node(s), property value ids | `/content/dam/myasset` |
-| **Value Record** (`VALUE`) | Property values (property names/types are in the template) | `jcr:title="My Doc"`, numbers, dates |
-| **Block Record** (`BLOCK`) | Raw chunks of binaries/long strings kept in the segment store | Inlined small binaries |
+| **Value Record** (`VALUE`) | Property values (property names/types are in the template) | `jcr:title="My Doc"`, numbers, dates, binaries under 16,512 bytes (inlined even when a DataStore is configured) |
+| **Block Record** (`BLOCK`) | Raw chunks of binaries/long strings kept in the segment store | Binaries of 16,512 bytes or more when no DataStore is configured (in bulk segments); strings of 16,512 bytes or more |
 | **Blob ID Record** (`BLOB_ID`) | Pointer to DataStore | Large binary content |
 | **List / Bucket Record** (`LIST`, `BUCKET`) | Multi-value properties, lists of record ids | Tags, categories |
 | **Map Record** (`LEAF`, `BRANCH`) | Child node entries (name → node), as a hash tree | Folders with many children |
@@ -92,10 +97,16 @@ stateDiagram-v2
     Write --> Read: Segment stored in TAR
     Read --> Read: Normal operations
     Read --> Compact: GC runs
-    Compact --> Delete: Old segment unreachable
+    Compact --> Delete: Old generation reclaimed by cleanup
     Read --> Corrupt: Disk error / bit flip
     Corrupt --> Recovery: Cannot fix, must skip/remove
 ```
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+- **"Not found" can mean "found but unreadable".** Any failure while loading a segment is thrown as `SegmentNotFoundException: Segment <id> not found`: a segment missing from every TAR index, but also an I/O error or a damaged segment header. Read the `Caused by:` line. A present segment with an overwritten header shows `Caused by: java.lang.IllegalArgumentException: invalid segment buffer` (`FileStore.readSegment` → `AbstractFileStore.asSegmentNotFoundException`; reproduced on both versions).
+- **A bit flip inside the records is not detected on read.** The CRC32 in the TAR entry name is only checked when Oak rebuilds a TAR index ([Why Repositories Get Bricked](/architecture/bricked)).
+- **"Delete" means cleanup by GC generation**, not a reachability check (data segments by generation; bulk segments once no retained segment references them). See [Why Repositories Get Bricked](/architecture/bricked) and [Generational GC](/architecture/gc).
+:::
 
 ## Viewing Segments
 
@@ -116,4 +127,8 @@ $ java -jar oak-run-*.jar explore /path/to/segmentstore
 2. **One bad segment** can make entire subtrees inaccessible
 3. **Recovery = skipping** bad segments, not fixing them
 4. **256 KiB size** is optimized for performance, not human readability
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

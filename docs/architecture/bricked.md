@@ -210,6 +210,8 @@ On startup, the writable store walks `journal.log` from newest to oldest and tak
 
 If no entry works, the writable store doesn't refuse to start. It writes a **new, empty root** and carries on from there.
 
+That is not always final, as long as the old segments are still in the store: `recover-journal` scans every segment and can find the old roots again. In a lab on Oak 1.22.24 and 2.4.0 it did; when the new repository had already written roots of its own, the recovered journal listed them last, and truncating it to the entry before them brought the content back ([Journal](/architecture/journal#journal-truncation)). Every write after that empty start makes the way back harder.
+
 A writable open also repairs what it can before serving anything: a TAR file without a valid index is recovered, the original renamed to `.bak` and a regenerated file written in its place ([TAR Files](/architecture/tar-files#the-tar-bak-files)). Never start AEM on a store that `check` can't open, and never start it on a damaged store before you have copied it.
 
 ## Why Nothing Can Bring It Back

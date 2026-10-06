@@ -1,5 +1,10 @@
 # 🗃️ TAR Files: Segment Containers
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 TAR files are the physical containers that store segments on disk. Understanding their structure helps diagnose and recover from corruption.
 
 ## TAR File Naming
@@ -102,6 +107,7 @@ Deleted: Never — on shutdown Oak only releases the lock; the empty file stays
 ```
 
 Read-only tools (`oak-run check`, `debug`, `recover-journal`) open the store read-only and do **not** take this lock.
+That also means nothing stops them while AEM is running, and `recover-journal` still **replaces `journal.log`**: in a lab test (Oak 2.4.0) it swapped the journal while another process held `repo.lock`. Stop AEM before running it.
 
 ### Why It Exists
 
@@ -183,6 +189,7 @@ Outcome: CATASTROPHIC CORRUPTION within minutes
 
 - **Maximum size**: 256 MiB per TAR file by default (OSGi `tarmk.size`, in MB); the writer rolls over after the write that reaches the limit, so a file can slightly exceed it
 - **When full**: New TAR file created with incremented sequence number
+- **After every start**: the first write after a read-write open goes into a new file (highest sequence + 1), and every GC cleanup also starts a new file. Lots of small TAR files after frequent restarts are normal (Oak 1.22 and 2.4: `TarFiles.init()` / `cleanup()`)
 - **After compaction**: Compacted content goes into new files (next sequence numbers, letter `a`); the sequence never resets
 
 ## Generations and Compaction
@@ -226,7 +233,7 @@ data00007a.tar.ro.bak  ← Recovered copy made by a read-only open (e.g. oak-run
 **Why they accumulate:**
 1. AEM/Oak opens a TAR file whose index is missing or invalid (crash, disk full, truncated copy)
 2. Oak renames the damaged file to `.bak` (or `.N.bak` if that name is taken) and writes a regenerated TAR file under the original name
-3. A read-only open (e.g. `oak-run check`) leaves the original untouched and writes a recovered `.ro.bak` copy instead
+3. A read-only open (e.g. `oak-run check`) leaves the original untouched and writes a recovered `.ro.bak` copy instead. It writes a **new copy on every read-only open** (`.ro.bak`, `.2.ro.bak`, …): in a lab test, two `check` runs left two copies (Oak 1.22.24 and 2.4.0)
 4. Oak never looks at `.bak` / `.ro.bak` files again
 
 **What this means:**
@@ -251,6 +258,8 @@ $ tail -n 1000 crx-quickstart/logs/error.log | grep -i "segment\|repository"
 
 # 4. NOW safe to delete .tar.bak files
 $ rm crx-quickstart/repository/segmentstore/*.tar.bak
+# *.tar.bak misses the .ro.bak / .2.bak / .2.ro.bak copies:
+$ rm crx-quickstart/repository/segmentstore/*.tar.*.bak
 ```
 
 ::: warning Recovery Opportunity
@@ -269,7 +278,7 @@ A `.tar.bak` is the damaged original: entries that recovery skipped (e.g. `Check
   - Disk full during tar file creation (index write fails)
   - Filesystem corruption affecting file tail/footer
   - Incomplete rsync/copy operation (footer not synced)
-- **Symptoms** (WARN on open): `Unable to load index of file data00005a.tar: Invalid checksum` (or `Magic number mismatch`, `File too short`, …), then `Could not find a valid tar index in [...], recovering...`
+- **Symptoms** (WARN on open): `Unable to load index of file data00005a.tar: Invalid checksum` (or `Magic number mismatch`, `File too short`, `Invalid alignment` for a file cut off mid-block, …), then `Could not find a valid tar index in [...], recovering...`
 - **Recovery**: **Automatic** - Oak scans segment data and rebuilds index
 
 **Segment Data Corruption** (NOT recoverable by index rebuild):
@@ -283,7 +292,7 @@ A `.tar.bak` is the damaged original: entries that recovery skipped (e.g. `Check
 
 ### How TAR Index Recovery Works
 
-**When it runs**: Automatically triggered when opening tar files if no generation of that file (`data00005a.tar`, `data00005b.tar`, …) has a valid index. If several generations exist and one has a valid index, Oak opens the newest valid one and deletes the others (`Removing unused tar file ...`).
+**When it runs**: Automatically triggered when opening tar files if no generation of that file (`data00005a.tar`, `data00005b.tar`, …) has a valid index. If several generations exist and one has a valid index, Oak opens the newest valid one and deletes the others (`Removing unused tar file ...`). This applies to read-write opens. A read-only open only looks at the highest letter and deletes nothing.
 
 **How it works**:
 1. Oak tries to read TAR index from footer
@@ -291,7 +300,12 @@ A `.tar.bak` is the damaged original: entries that recovery skipped (e.g. `Check
 3. Scans raw TAR file data sequentially to find all segment entries (entries with a bad checksum or truncated at the end are skipped with a WARN)
 4. Extracts segment IDs and data
 5. Backs up each damaged file to `.bak` (read-write open) — a read-only open never touches the original
-6. Writes a new TAR file (graph, binary references, index rebuilt) under the original name, or as `.ro.bak` for a read-only open
+6. Writes a new TAR file (graph, binary references, index rebuilt) under the original name (the lowest letter, if several generations were damaged), or as `.ro.bak` for a read-only open
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+- **Expected noise:** recovery re-scans the old footer, so it logs `Unexpected entry data00005a.tar.brf in tar file …, skipping...` (and `.gph`) plus a burst of `Invalid entry checksum at offset … skipping...` WARNs. These are harmless. The lines that mean lost data are `Checksum mismatch in entry …` and `Partial entry …`.
+- **When no complete segment is left** (e.g. a file cut off inside its first segment), there is nothing to regenerate. A read-write start renames the original to `.bak`, then fails with `java.io.IOException: Failed to open recovered tar file data00005a.tar`. The **next** start succeeds without that file and rewinds the journal (`Unable to access revision …, rewinding...`). Everything that lived only in that file is gone from HEAD. A read-only open (`check`, `recover-journal`) fails with `Failed to open tar file …` instead. Lab-tested on both versions: a TAR file truncated to 20,000 bytes inside its only segment. Copy the store before any read-write start ([why](/architecture/bricked#path-4-starting-aem-on-a-store-check-can-t-open)).
+:::
 
 **This is automatic** - no special command needed:
 
@@ -302,6 +316,14 @@ $ java -jar oak-run-*.jar check /path/to/segmentstore
 # "Could not find a valid tar index in data00005a.tar, recovering read-only"
 # "Recovering segments from tar file data00005a.tar"
 # "Regenerating tar file data00005a.tar.ro.bak"
+#
+# The oak-run console only prints WARN; the "Recovering"/"Regenerating" lines are INFO
+# (AEM's error.log shows them). What a lab check run actually printed:
+#   Oak 1.22: WARN ... Unable to load index of file data00005a.tar: Invalid checksum
+#             WARN ... Could not find a valid tar index in data00005a.tar, recovering read-only
+#   Oak 2.4:  WARN ... Unable to load index of file data00005a.tar: Invalid checksum   (twice)
+#             ("recovering read-only" is logged at INFO since Oak 1.46)
+# Each check run writes another copy: data00005a.tar.ro.bak, data00005a.tar.2.ro.bak, ...
 
 # Recovery happens automatically, then check proceeds normally
 ```
@@ -359,9 +381,9 @@ $ java -jar oak-run-*.jar check /path/to/segmentstore
 | Issue | Symptom | Solution |
 |-------|---------|----------|
 | **Corrupted index** | `Unable to load index of file …` | Automatic recovery on open |
-| **Truncated file** | `Partial entry … ignoring...` during recovery | Recovery keeps complete entries; segments lost from the tail → recovery procedures / restore |
+| **Truncated file** | `Partial entry … ignoring...` during recovery | Recovery keeps complete entries; segments lost from the tail → recovery procedures / restore. No complete entry left → `Failed to open recovered tar file …` ([above](#how-tar-index-recovery-works)) |
 | **Missing segments** | `SegmentNotFoundException` | Recovery procedures |
-| **Disk full during write** | Partial TAR | Remove incomplete, restore |
+| **Disk full during write** | Partial TAR | Remove incomplete, restore (on the next open, index recovery already keeps every complete segment of a partial TAR) |
 | **Generation 'z' reached** | Cleanup can't rewrite that file any more | Manual intervention |
 
 ## Key Takeaways
@@ -375,4 +397,8 @@ $ java -jar oak-run-*.jar check /path/to/segmentstore
 6. **repo.lock is a safety mechanism** - don't blindly delete it
 7. **.tar.bak files linger** - they come from TAR index recovery, never auto-cleanup, delete manually after verification
 8. **25% threshold** - cleanup only rewrites if savings exceed 25%
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

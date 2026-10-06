@@ -1,5 +1,10 @@
 # Generational Garbage Collection
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 Oak uses a generational garbage collection algorithm: compaction copies the **current root** into a new **GC generation**, and cleanup drops segments of old generations.
 
 ## Understanding Revision Roots
@@ -368,12 +373,16 @@ Total time: two successful GC cycles (~41 hours with a daily 2 AM run)
 - ❌ Only tail compaction scheduled (never rewrites the base from the last full compaction)
 - ❌ Compaction disabled (common after incidents, then forgotten)
 - ❌ Stale checkpoints (compacted along with HEAD, they keep old content alive)
-- ❌ DataStore GC never scheduled (binaries accumulate)
+- ❌ DataStore GC never scheduled (binaries accumulate). AEM puts it in the weekly window by default, so check that it is still there and that it actually deletes: on a shared DataStore a refused sweep still reports success ([reading the log](/datastore/gc#reading-the-log))
 
 ### Best Practices
 
 - ✅ Schedule full compaction monthly/quarterly
 - ✅ Monitor TAR file ages (old files = full compaction not running)
-- ✅ Schedule DataStore GC after major deletions
+- ✅ Schedule DataStore GC after major deletions, once the revision GC cycles above have released them ([why](/datastore/gc#why-deleted-content-doesnt-free-space))
 - ✅ Understand "delete" ≠ "disk space freed"
 - ✅ Plan for temporary disk growth during compaction (needs 2x space)
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
+:::

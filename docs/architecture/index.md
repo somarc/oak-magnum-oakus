@@ -1,5 +1,10 @@
 # 🏗️ Oak Segment Store Architecture
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 Understanding Oak's segment store architecture explains **why** certain recovery options work and others don't.
 
 ## Core Principles
@@ -10,7 +15,7 @@ Oak Segment Tar storage is built on three key principles:
 
 2. **Compactness** - Records are optimized for size to reduce IO and maximize cache efficiency.
 
-3. **Locality** - Related nodes (parent + children) are stored in the same segment for fast tree traversal.
+3. **Locality** - Related nodes (parent + children) usually end up in the same segment for fast tree traversal (*usually*: when a segment fills up, writing simply continues in the next one).
 
 ## The Architecture Stack
 
@@ -64,7 +69,7 @@ A segment is the **atomic unit of storage** in Oak Segment Tar:
 **What's Inside a Segment:**
 
 - **Node Records** - JCR node structure (template + child nodes + property values)
-- **Value Records** - Property values (strings, numbers, dates)
+- **Value Records** - Property values (strings, numbers, dates), and binaries smaller than 16,512 bytes: those are inlined here even when a DataStore is configured
 - **Block Records** - Raw chunks of binaries/long strings stored in the segment store
 - **Blob ID Records** - Pointers to external binaries (DataStore)
 - **List / Bucket Records** - Multi-value properties and lists of record ids
@@ -145,14 +150,16 @@ crx-quickstart/repository/segmentstore/
 ├── data00002a.tar.bak      ← Damaged original kept by TAR recovery (see TAR Files)
 ├── journal.log             ← Current journal
 ├── gc.log                  ← GC history (one line per successful compaction)
-├── manifest                ← Store version
+├── manifest                ← Store version (store.version=2)
 └── repo.lock               ← Repository lock file
 ```
 
 **Pattern**: `data[SEQUENCE][GENERATION].tar`
-- **SEQUENCE**: 5-digit number (00000, 00001...)
-- **GENERATION**: Single letter (a, b, c, d... z) — bumped only when GC cleanup rewrites *that* file; new files always start at 'a'
-- **Extension**: `.tar` (active), `.tar.bak` / `.ro.bak` (left behind by TAR index recovery)
+- **SEQUENCE**: number zero-padded to 5 digits (00000, 00001...; `data%05d%s.tar`)
+- **GENERATION**: Single letter (a, b, c, d... z) — bumped only when GC cleanup rewrites *that* file (more than 25% reclaimable); new files always start at 'a'; a file at 'z' is never rewritten again
+- **Extension**: `.tar` (active), `.tar.bak` (damaged original, renamed by a read-write open) / `.tar.ro.bak` (recovered copy written by a read-only open such as oak-run; the original stays untouched) — `.2.bak`, `.2.ro.bak`, … when the name is taken. All left behind by TAR index recovery; details in [TAR Files](/architecture/tar-files)
+
+**Next to `segmentstore/`** in `crx-quickstart/repository/`: `datastore/` (the FileDataStore, when one is configured; see [DataStore](/datastore/)), `index/` (local copies of the Lucene indexes; Oak's `localIndexDir` defaults to `<repository.home>/index`) and `blobids/` (the blob ID tracker). Oak 2.4.0 turns blob ID tracking off by default (`blobTrackSnapshotIntervalInSecs` = 0), so an AEM 6.5 LTS SP3 install has no `blobids/` *(since Oak 2.4.0)*.
 
 ### TAR File Lifecycle
 
@@ -164,6 +171,7 @@ crx-quickstart/repository/segmentstore/
 TAR File Structure:
 ┌─────────────────────────────────────┐
 │ Segment 1 data (up to 256KB)        │ ← Immutable content
+│   tar entry name: <uuid>.<crc32>    │
 ├─────────────────────────────────────┤
 │ Segment 2 data (up to 256KB)        │
 ├─────────────────────────────────────┤
@@ -173,9 +181,12 @@ TAR File Structure:
 │ - Binary reference index (.brf)     │
 │ - Segment reference graph (.gph)    │
 │ - TAR index (.idx): UUIDs, offsets, │
-│   sizes, GC generation, CRC32       │
+│   sizes, GC generation, plus one    │
+│   CRC32 over the index itself       │
 └─────────────────────────────────────┘
 ```
+
+Each segment's CRC32 sits in its tar entry name, but Oak only checks it when it has to rebuild a TAR index; normal reads don't verify it ([Why Repositories Get Bricked](/architecture/bricked)).
 
 **Recovery Implication:**
 - ✅ TAR index corruption = **recoverable** (metadata can be rebuilt)
@@ -185,10 +196,10 @@ TAR File Structure:
 
 The journal tracks the latest state of the repository:
 
-- **Purpose**: Records sequence of root node references
+- **Purpose**: Records sequence of root node references (one line per flush, at most every 5 seconds, not one per commit; see [Journal](/architecture/journal))
 - **Atomicity**: Only updated after segments are flushed to disk
 - **GC Role**: Most recent root is starting point for garbage collection
-- **Recovery**: ✅ Can be rebuilt by scanning segments
+- **Recovery**: ✅ Can be rebuilt by scanning segments, as long as `journal.log` still has one entry whose segment exists ([Journal Recovery](/recovery/journal))
 
 ## Why This Matters for Recovery
 
@@ -219,4 +230,8 @@ Oak's immutability makes it fast and consistent, but means **corruption cannot b
 3. **Rebuilding metadata** (TAR index, journal)
 
 There is **no tool** that can "fix" corrupted segment data.
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::
