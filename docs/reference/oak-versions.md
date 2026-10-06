@@ -88,6 +88,8 @@ Everything not listed here behaves the same at both ends of the range. "Changed 
 | `datastore --check-consistency [markOnly]` | No `markOnly` argument | Optional `markOnly` | 1.54 | [Consistency Check](/datastore/consistency) |
 | `datastore --sweep-only-refs-past-retention` | Not available | Available | 1.28 | [DataStore GC](/datastore/gc) |
 | `datastorecheck --verboseRootPath` | Not available | Available | 1.26 | [Consistency Check](/datastore/consistency) |
+| Blob ID tracker (`blobTrackSnapshotIntervalInSecs`) | On, every 12 h | Off (`0`): every DataStore GC sweep lists the whole DataStore, and the online consistency check reports 0 missing | 2.4.0 | [DataStore GC](/datastore/gc#running-it) |
+| `-Doak.datastore.sharedTransient=true` | Not available | Instance removes its own `repository-*` marker on shutdown | 1.26 | [DataStore GC](/datastore/gc#cloned-environments) |
 | Async-indexing checkpoint lifetime | 1000 days | 100 days | 1.66 | [Async Indexing](/checkpoints/async-indexing) |
 | `failingIndexTimeoutSeconds` default | 1800 s (30 min) | 604800 s (7 days) | 1.32 | [Death Loop](/checkpoints/death-loop) |
 | Move a stuck index lane forward | Offline procedure only | IndexStats MBean `forceIndexLaneCatchup("CONFIRM")` | 1.66 | [Checkpoint Advancement](/checkpoints/checkpoint-advancement) |
@@ -135,3 +137,6 @@ Only `oak-run` is built; every other Oak module comes from Maven Central at the 
 - `:remove-node` refuses `/` and top-level nodes.
 - `:binary-paths` matches external DataStore blobs only. Blobs stored inside segments have no content identity, so they never match.
 
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
+:::

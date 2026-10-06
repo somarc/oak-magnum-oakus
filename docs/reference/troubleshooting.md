@@ -1,5 +1,10 @@
 # 🔧 Troubleshooting Guide
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 Common issues and their solutions.
 
 ## SegmentNotFoundException
@@ -10,11 +15,14 @@ org.apache.jackrabbit.oak.segment.SegmentNotFoundException:
   Segment abc123-def456-... not found
 ```
 
+In `error.log` the running store logs each miss as `Segment not found: <segment-id>. SegmentId age=…ms` (logger `SegmentNotFoundExceptionListener`). A GC tag after the age changes the diagnosis: see the next list.
+
 ### Causes
 - Disk corruption
-- Incomplete compaction
+- Incomplete compaction — *not by itself: a cancelled or failed compaction leaves the head intact and its cleanup removes nothing the head needs ([Compaction](/recovery/compaction)). What does produce an SNFE without any corruption is GC racing a long-lived session; the `Segment not found` line then carries a GC tag such as `[pre-compaction cleanup]` ([GC](/architecture/gc#long-lived-sessions-tail-compaction))*
 - Storage failure
 - Bit rot
+- Human error, such as TAR files deleted by hand because they look old ([Why Repositories Get Bricked](/architecture/bricked))
 
 ### Solutions
 
@@ -34,7 +42,11 @@ org.apache.jackrabbit.oak.segment.SegmentNotFoundException:
 ### Symptom
 ```
 AEM fails to start with repository errors
+IllegalStateException: /path/to/segmentstore is in use by another store.
+Startup hangs with no error at all
 ```
+
+The `is in use by another store.` message only appears when the same JVM already has the store open. A **different process** holding `repo.lock` produces no message: the writable store waits on the lock until that process exits (lab, both releases: a second `console --read-write` and `checkpoints list` both waited until killed). Details: [The `repo.lock` File](/architecture/tar-files#the-repo-lock-file).
 
 ### Diagnosis
 ```bash
@@ -53,7 +65,7 @@ $ java -jar oak-run-*.jar check /path/to/segmentstore
 
 | Cause | Solution |
 |-------|----------|
-| Store still open elsewhere | Stop the other process; the OS lock on `repo.lock` is released when it exits (deleting the file is not needed) |
+| Store still open elsewhere | Stop the other process; the OS lock on `repo.lock` is released when it exits (deleting the file is not needed). `check`, `recover-journal` and `console` without `--read-write` open the store read-only and take no lock, so they neither wait for AEM nor stop you from running against a live store; `checkpoints`, `compact` and `console --read-write` take the lock |
 | Corrupted journal | `recover-journal` |
 | Missing segments | Recovery procedures |
 | Disk full | Free space, then recover |
@@ -72,9 +84,11 @@ Repository disk usage keeps increasing
 # Check TAR file ages
 $ ls -lh /path/to/segmentstore/data*.tar
 
-# Check checkpoint count
+# Check checkpoint count (AEM stopped: the tool waits on repo.lock otherwise)
 $ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 ```
+
+With AEM running, use JMX instead: the `CheckpointManager` MBean ("Segment node store checkpoint management") has `listCheckpoints()`.
 
 ### Common Causes
 
@@ -126,10 +140,10 @@ Indexer stuck or failing
 
 ### Diagnosis
 ```bash
-# Check /:async node
+# Check /:async node (read-only console, works while AEM runs)
 $ java -jar oak-run-*.jar console /path/to/segmentstore
-> :cd /:async
-> :pn
+> cd /:async
+> pn
 
 # Look for:
 # - async-temp with multiple entries (death loop)
@@ -162,8 +176,8 @@ $ du -sh /path/to/segmentstore
 # Check TAR file count
 $ ls /path/to/segmentstore/data*.tar | wc -l
 
-# Check checkpoint count
-$ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list | wc -l
+# Check checkpoint count (AEM stopped; `wc -l` would also count the header lines)
+$ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list | grep -c '^- '
 ```
 
 ### Common Causes
@@ -172,7 +186,7 @@ $ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list | wc -l
 |-------|----------|
 | Too many TAR files | Run compaction |
 | Many checkpoints | Remove orphaned |
-| Large repository | Consider clustering |
+| Large repository | Consider clustering *(TarMK itself can't be clustered: one process holds `repo.lock`. Clustering means DocumentNodeStore, which is outside this site's scope)* |
 | Slow storage | Upgrade to SSD |
 
 ---
@@ -187,3 +201,7 @@ $ java -jar oak-run-*.jar checkpoints /path/to/segmentstore list | wc -l
 | Compaction fails | Check for corruption first |
 | Indexing stuck | Check `/:async` node |
 | Slow performance | Check size and compaction |
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
+:::
