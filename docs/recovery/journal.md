@@ -1,18 +1,31 @@
 # 📜 Journal Recovery
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 The `recover-journal` command rebuilds the journal by scanning all segments. It's often the fastest path to recovery.
 
 ## When to Use
 
-- Journal file points at corrupted revisions (`journal.log` must still exist and contain at least one entry whose segment is present - otherwise the read-only store cannot open: `Cannot start readonly store from empty journal`)
+- Journal file points at corrupted revisions (`journal.log` must still exist and contain at least one entry whose segment is present - otherwise the read-only store cannot open: `Cannot start readonly store from empty journal`; with no `journal.log` at all: `Invalid FileStore directory <path>`)
 - `oak-run check` shows journal points to bad segments
 - After unexpected shutdown with corruption
+
+::: tip What Oak already does without it
+On every start, Oak walks `journal.log` from the newest entry back and takes the first one whose head segment exists. It logs `Unable to access revision …, rewinding...` for each entry it skips. If the newest entries point at *missing* segments, the journal fixes itself that way, as long as an older entry is still usable. `recover-journal` is for heads whose segment exists but whose tree or checkpoints are broken (Oak 1.22 and 2.4: `FileStoreUtil.findPersistedRecordId`).
+:::
 
 ## Basic Usage
 
 ```bash
 $ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 ```
+
+::: warning Stop AEM first
+`recover-journal` opens the store read-only and takes **no** `repo.lock`, yet it moves and rewrites `journal.log`. In a lab test (Oak 2.4.0) it ran while another process held the lock and swapped the journal underneath it.
+:::
 
 ## What It Does
 
@@ -25,7 +38,7 @@ flowchart TD
 ```
 
 1. **Scans every data segment** in every TAR file
-2. **Identifies root candidates** - node records with "checkpoints" and "root" children, timestamped from the segment info
+2. **Identifies root candidates** - node records with "checkpoints" and "root" children, timestamped from the segment info (bulk segments are skipped; revisions written before the store's first checkpoint have no `checkpoints` child and are not candidates. A store that never had a checkpoint gives `No valid journal entries found, aborting` even when it's healthy. AEM repositories always have checkpoints)
 3. **Sorts them oldest → newest**, then **validates from the newest backwards** (full head tree incl. segment binaries, then every checkpoint) and drops each corrupt candidate until the first fully consistent one - older candidates are kept unvalidated
 4. **Moves the old journal** to `journal.log.bak.000` (next free `.001`, `.002`, …) and writes the new `journal.log`
 
@@ -39,6 +52,15 @@ Journal recovered
 ```
 
 Failure messages: `No valid journal entries found, aborting`, `Unable to recover the journal entries, aborting`, `Too many journal backups, please cleanup` (after `.bak.999`). Exit code `0` on success, `1` otherwise. The only option is `-h/--help`.
+
+Rarer ones: `Segment Store path not specified` / `Too many Segment Store paths specified` (argument errors), `Unable to backup old journal, aborting`, and `Unable to write the recovered journal, rolling back` → `Old journal rolled back` (still exit `1`).
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+- **Revision IDs in the output** use the record-id form with a hex offset (`ee46e58d-….0000000a`). `journal.log` uses a decimal offset (`ee46e58d-…:10`). Keep that in mind when you grep one for the other.
+- **Missing segments during the scan** print a `SegmentNotFoundException` stack trace on stderr, once per segment, and the scan continues.
+- **The current head has to be readable**. After the scan and before validating, the tool builds a node store on the newest journal entry whose segment exists. If a record that this head needs is in a missing segment, the run aborts with `Unable to recover the journal entries, aborting` and nothing is written. That record can be the super-root's template, which later revisions share. Lab test on both versions: we deleted the TAR file that held the template and the `checkpoints` node. The run aborted, and cutting `journal.log` back to an older line only changed the result to `No valid journal entries found, aborting`. Such a store is past `recover-journal` ([why](/architecture/bricked#why-nothing-can-bring-it-back)).
+- **A damaged journal tail is fine**: a half-written last line (`Skipping invalid journal entry: …`) or garbage lines (`Skipping invalid record id …`) are skipped, and the run succeeds (lab, both versions).
+:::
 
 ## After Recovery
 
@@ -205,6 +227,10 @@ $ grep "28c7e87c-1379-4ebb-94c7-0d0372b30a05" journal.log
 # This will cause AEM to start from an even older state, losing more data
 ```
 
+::: danger If no line is left that Oak can use
+If you cut so much that no remaining line points at an existing segment (or you empty the file), AEM does **not** refuse to start. Read-only tools stop with `Cannot start readonly store from empty journal`. The read-write store, though, writes a **new, empty root** and appends it to `journal.log` ([why](/architecture/bricked#path-4-starting-aem-on-a-store-check-can-t-open)). Lab, both versions: after a read-write open with an empty journal, `/` had no children. In the lab, `recover-journal` brought the old head back afterwards: the empty root has no `checkpoints` child, so it isn't a candidate. After a real AEM start on such a store, AEM's own new revisions would be the newest candidates. That case wasn't tested.
+:::
+
 **Mistake #3: Not backing up first**
 ```bash
 # If you mess up without a backup, you have to run oak-run recover-journal anyway
@@ -217,6 +243,8 @@ $ grep "28c7e87c-1379-4ebb-94c7-0d0372b30a05" journal.log
 # Oak writes Unix line endings (\n only) - keep journal.log exactly as Oak writes it
 # Use: dos2unix journal.log (if you accidentally edited on Windows)
 ```
+
+In a lab test, Oak 1.22.24 and 2.4.0 read a `\r\n` journal without a warning (it is read with commons-io `ReversedLinesFileReader`), so `dos2unix` is hygiene, not a rescue. Do **keep the final newline**: Oak appends `<revision> root <timestamp>\n` at the end of the file without checking, so a missing newline glues the next entry onto your last line (`LocalJournalFile.writeLine`).
 
 ### Real-World Decision Example
 
@@ -248,4 +276,8 @@ Decision: If you're experienced → Manual truncation saves $30K
 4. **Always verify** - Run `check` after recovery
 5. **Manual truncation** - Fast but risky, for experts only
 6. **Time scales with size** - 1TB = 10-20x longer than 100GB
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

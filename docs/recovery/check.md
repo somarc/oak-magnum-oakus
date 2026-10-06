@@ -12,7 +12,7 @@ The `check` command performs a consistency check on a SegmentStore (TarMK) repos
 ```
 SegmentNotFoundException: Segment 0a1b2c3d-4e5f-6789-abcd-ef0123456789 not found
 TarMK refuses to start after unclean shutdown
-Unable to access revision 0a1b2c3d-4e5f-6789-abcd-ef0123456789:261920, rewinding...
+Unable to access revision 0a1b2c3d-4e5f-6789-abcd-ef0123456789.000000b4, rewinding...
 Repository won't open after disk full event
 ```
 
@@ -155,11 +155,13 @@ org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 0a1b2c3d-4e5
 ```bash
 $ java -jar oak-run-*.jar check /path/to/segmentstore
 
-java.io.IOException: Failed to open tar file data00005a.tar.ro.bak
+java.io.IOException: Failed to open tar file data00005a.tar
     at org.apache.jackrabbit.oak.segment.file.tar.TarReader.openRO(...)
     ...
 # Critical tar files are corrupted or missing
 ```
+
+*(Oak 1.22 names the read-only recovery copy instead: `Failed to open tar file data00005a.tar.ro.bak`. The message names the original file since Oak 1.46.)*
 
 **What this means:**
 - ❌ Check command cannot initialize the FileStore
@@ -171,7 +173,13 @@ java.io.IOException: Failed to open tar file data00005a.tar.ro.bak
 - ❌ **NO** `oak-run recover-journal` (can't open the store to scan it)
 - ❌ **NO** `oak-upgrade` (can't initialize source repository)
 - ❌ **NO** magical Oak tools (everything needs FileStore to open)
-- ✅ **ONLY** restore from backup
+- ✅ **ONLY** restore from backup *(one narrow exception for a TAR file with no complete segment left: see the box below)*
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+- **Each `check` run writes another recovery copy.** When a TAR index is damaged but its segments are intact, a read-only open (`check`, `recover-journal`, a read-only console) regenerates the index into a new file next to the original and opens that: `data00005a.tar.ro.bak`, then `data00005a.tar.2.ro.bak`, … one per run. That case does **not** end here: `check` carries on normally ([TAR Files](/architecture/tar-files#the-tar-bak-files)).
+- **A TAR file with no complete segment left** (e.g. cut off inside its first segment by a crash or a full disk) has nothing to regenerate, so the read-only open fails as above. A **read-write** open of a **copy** behaves differently: it renames the file to `.bak`, fails once with `java.io.IOException: Failed to open recovered tar file data00005a.tar`, and the **next** read-write open succeeds without that file and rewinds the journal (`Unable to access revision …, rewinding...`). Everything that lived only in that file is gone; if it was the newest file, that is a rollback to an older head. Run `check` on that copy afterwards to see what is left. Lab-tested on both versions ([TAR Files](/architecture/tar-files#how-tar-index-recovery-works)).
+- Do this **only on a copy**, never on the original and never by starting AEM on it ([why](/architecture/bricked#path-4-starting-aem-on-a-store-check-can-t-open)).
+:::
 
 ::: tip One exception: a broken checkpoint list
 With the default `--checkpoints all`, `check` lists the head's checkpoints before it starts. If that listing reads a missing segment, the stack trace runs through `SegmentNodeStore.checkpoints` and the store itself did open. `check --head` skips the listing and can still test the head.
@@ -202,6 +210,8 @@ java -jar oak-run-*.jar check /path/to/segmentstore
 → Segment references are BROKEN → Repository is BRICKED
 ```
 
+The two quoted `❌` lines are printed **per revision**: "Error while traversing" names a broken path in the revision being checked, "Skipping invalid record id" a journal revision whose root can't be read. `check` then moves on to older revisions, so they can appear in the output of a store that is still recoverable. The verdict is the Head/Checkpoints/Overall block at the end (a stack trace instead of that block is Scenario B). Lab (both versions): a store with one lost node printed `Error while traversing /content/corrupted: …SegmentNotFoundException…` and `Skipping invalid record id …`, then `Latest good revision … is …:10` with exit `0`.
+
 ### Why TAR Timestamps Don't Matter
 
 TAR files can have uniform timestamps for many legitimate reasons:
@@ -230,15 +240,16 @@ A repository is only truly unrecoverable when:
 - Physical segment data is deleted/corrupted (file corruption, disk failure)
 - Compaction ran over corrupted segments AND removed the only good copies
 - TAR files are present but contain invalid segment data
-- Manifest references segments that were never written
+- Segments reference segments that were never written (the `manifest` file itself only holds `store.version`)
 
 ## Recovery Decision Matrix
 
 | Check Result | Interpretation | Recovery Strategy |
 |--------------|----------------|-------------------|
 | **Good revision found** ✅ | Repo is recoverable | **Option A**: Journal rollback (fast, loses recent changes)<br>**Option B**: Surgical removal with `count-nodes` + `remove-nodes` (slower, preserves more) |
-| **No good revision found** ❌ | Segment-level corruption | **Last resort**: `oak-upgrade` sidegrade to extract what you can |
-| **Check itself fails** 💥 | Repository is "bricked" | Storage-level damage (store cannot be opened); restore from backup |
+| **Overall `none`, Head has a revision** 🟡 | Only a checkpoint is broken; the content is intact | Remove that checkpoint on a cold copy, then `check` again ([how](/architecture/bricked#only-a-checkpoint-is-broken)). `check` exits `0` here: read the lines, not the exit code |
+| **No good revision found** ❌ | Segment-level corruption | A backup first, even an old one. Without one: `recover-journal` (it scans every segment, not just `journal.log`), `check` again, and only then the **last resort**: `oak-upgrade` sidegrade to extract what you can ([crisis Step 5](/crisis/#✅-step-5-last-resort-no-good-revision)) |
+| **Check itself fails** 💥 | Repository is "bricked" | Storage-level damage (store cannot be opened); restore from backup. Exceptions: a trace through `SegmentNodeStore.checkpoints` (run `check --head`) and a TAR file with no complete segment ([above](#scenario-b-check-can-t-even-run-fatal)) |
 
 ## Check vs. Count-Nodes: Different Tools, Different Jobs
 
@@ -253,7 +264,7 @@ A repository is only truly unrecoverable when:
 | **Coverage** | Tests root + checkpoints + filters | **Full tree traversal** |
 | **Output** | **Revision ID** + timestamp | **List of corrupt paths** |
 | **Use Case** | "Can I rollback?" | "What do I need to remove?" |
-| **Binaries** | Segment blobs only (`!isExternal`) | **All blobs** (configurable) |
+| **Binaries** | Segment blobs only (`!isExternal`), and only with `--bin` | **All blobs** (configurable; DataStore blobs only when the console was started with your DataStore option) |
 | **Speed** | ⚡ Fast (targeted, stops early) | 🐌 Slower (comprehensive) |
 | **Recovery** | **Time-machine** (rollback) | **Surgical** (remove nodes) |
 
@@ -268,12 +279,17 @@ $ java -jar oak-run-*.jar check /path/to/segmentstore
 # → Repo is recoverable!
 
 ## Option A1: Rollback approach (fastest, safest, loses recent changes)
+# AEM stopped, on a copy: recover-journal takes no lock, but it rewrites journal.log
+# (the old one is kept as journal.log.bak.NNN)
 $ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 
 ## Option A2: Surgical approach (slower, preserves more, keeps recent changes)
 $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
-> :count-nodes deep analysis
-# → Identifies ALL corrupted paths (segments + blobs)
+> :count-nodes segment-binaries analysis
+# → Identifies ALL corrupted paths (segments + blobs stored in the segment store)
+# → "deep" also reads DataStore binaries: only in a console started with your DataStore
+#   option (--fds-path, --s3ds, --azureblobds). Without it, EVERY DataStore binary is logged
+#   as "Missing blob … without specifying BlobStore" (see Surgical Removal, Step 1)
 # → CRITICAL: Review the log file output BEFORE proceeding!
 # → Check for critical paths (/oak:index/uuid, /jcr:system, /rep:security)
 # → If critical paths are corrupted, surgical removal will NOT work
@@ -287,7 +303,9 @@ $ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 # Scenario B: No good revision found ❌
 # Output: "No good revision found"
 # → Segment-level corruption throughout journal history
-# → oak-upgrade sidegrade is your only hope (extracts what's accessible)
+# → Backup first, even an old one
+# → No backup: recover-journal (scans ALL segments, not just journal.log), then check again
+# → Still nothing: oak-upgrade sidegrade is your last hope (extracts what's accessible)
 ```
 
 ## Critical Warning: Check Before Compaction
@@ -342,4 +360,8 @@ These times are **I/O bound** and scale with repository size. `check` stops at t
 4. **"Bricked" has two meanings** - Check can't run (truly bricked) vs no good revision (recoverable)
 5. **Segment graph integrity is the ONLY test** - TAR timestamps don't matter
 6. **Prevention is everything** - Run `check` regularly, especially before compaction
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

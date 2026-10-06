@@ -45,13 +45,21 @@ flowchart TD
 Use the `count-nodes` command in oak-run console:
 
 ```bash
-$ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
+$ java -jar oak-run-*.jar console --fds-path /path/to/datastore /path/to/segmentstore
+# Read-only is enough for count-nodes (and matters for :remove-nodes, see Step 2).
+# --fds-path for a FileDataStore; --s3ds / --azureblobds <config file> for S3 / Azure.
+# Without a DataStore option, "deep" logs EVERY DataStore binary as missing (see below).
 
 # In the console:
 > :count-nodes deep analysis
 ```
 
 `:count-nodes [segment-binaries | datastore-binaries | deep] [analysis]` always walks the whole tree from `/` (it takes no path argument) and only reads. `deep` also reads every segment and DataStore binary stream; `analysis` adds a grouped summary of corrupted paths with recovery hints. Use `deep` (or `datastore-binaries`) only with your DataStore options (`--fds-path` …): without them every external binary is reported as a missing blob. For a missing-segment incident, `segment-binaries` reads everything the segment store holds.
+
+::: warning What the fork code actually does (lab, Oak 1.22.24 and 2.4.0 builds)
+- **No DataStore option:** a healthy DataStore binary and a really missing one produce the same line: `Warning: Missing blob (segment) at <path>: Attempt to read external blob with blobId [<id>] without specifying BlobStore` (from Oak's `SegmentBlob`). The lab store had one missing and one healthy DataStore binary; `deep` without `--fds-path` reported both, with `--fds-path` only the missing one. `:remove-nodes` never deletes these lines: it logs them as `[WARN]` (verified with a real run on a copy, both nodes still there).
+- **A wrong DataStore path is worse:** `--fds-path` pointing at a directory that doesn't exist (a typo) silently creates it, and every DataStore binary is then reported as `DataStoreException: Record … does not exist`. Those lines **are** deletable: the dry-run report listed `[DELETE]` for every one, including a healthy asset's original (whole asset). If `Total missing blobs` is close to the number of DataStore binaries, check the path, and spot-check a reported blob ID in the DataStore before any real run.
+:::
 
 ### What count-nodes Does
 
@@ -108,11 +116,15 @@ Warning: Unable to read node /var/audit/2024/01/15/corrupted-entry/: ...
 
 ::: warning ⚠️ What `:remove-nodes` acts on
 `:remove-nodes` only deletes for these input lines:
-- `Warning: Missing blob at <path>: org.apache.jackrabbit.core.data.DataStoreException: Record …` (missing DataStore binaries)
+- `Warning: Missing blob at <path>: org.apache.jackrabbit.core.data.DataStoreException: Record …` (missing DataStore binaries; on Oak 2.x the class is `org.apache.jackrabbit.oak.spi.blob.data.DataStoreException`)
 - datastore consistency-check lines `aa/bb/cc/<64-hex blob id>,<path>`
 - `Warning: Unable to read node <path>/: …` lines (removes that node)
 
 **`Warning: Missing segment at …` lines are only counted and logged as `[WARN]` — they are never deleted.** For SNFE paths, review them and remove each one with [`:remove-node`](#single-node-removal).
+
+Also logged as `[WARN]` only, never deleted: `Missing blob at …: Attempt to read external blob … without specifying BlobStore` (count-nodes ran without the DataStore option) and `Missing blob at …: Segment … not found` (a lost bulk segment: pick the path yourself).
+
+In the lab, a `Missing blob` line that `:count-nodes` wrote in a **`--read-write`** console carried an extra prefix, `…: java.io.IOException: org.apache…DataStoreException: Record …`, and builds of the fork before commit `cf88588` (October 2026) then read the path as `<path>: java.io.IOException` and skipped it (`[SKIP] … does not exist`). The same scan in a read-only console (`console --fds-path … /path/to/segmentstore`, no `--read-write`) wrote the line without the prefix, and the dry run listed the `[DELETE]`. Current builds accept both forms (lab, 1.22.24 and 2.4.0). With an older build, rebuild with the [recipe](/reference/oak-versions#fork-only-console-commands), or run `:count-nodes` read-only and open `--read-write` only for the removal. Either way, read the dry-run report for `[SKIP]` lines.
 :::
 
 ## 🚨 CRITICAL: Surgical Removal Limitations
@@ -296,6 +308,7 @@ Review this carefully before proceeding:
 Removal needs the console opened with `--read-write`. Each deletion is merged as its own commit.
 
 ```bash
+$ java -jar oak-run-*.jar console --read-write /path/to/segmentstore
 # In oak-run console:
 > :remove-nodes count-nodes-snfe-20240111-093500.log
 RemoveNodesCommand completed. Full detailed log at: /current/dir/remove-nodes-20240111-102000.log
@@ -352,4 +365,8 @@ Node at path '/content/dam/2024/Q3' removed successfully.
 5. **Property indexes are CRITICAL** - uuid, nodetype cannot be removed
 6. **Lucene indexes are EXPENSIVE** - Full-text re-indexing takes weeks
 7. **Verify with check** - Confirm repository is healthy
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

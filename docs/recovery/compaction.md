@@ -112,6 +112,8 @@ journal.log:
 xyz999…:4096 root 1696360000000  ← newest (compacted) revision, history GONE
 ```
 
+(The file actually ends with an empty line after that entry: `Compact` writes `"<revision> root <time>\n"` through `writeLine`, which adds its own newline. Later opens log a harmless `WARN … Skipping invalid journal entry:` for it. Oak 1.22 and 2.4.)
+
 **Impact:**
 - ✅ Repository still works (head is valid)
 - ❌ Can't use `oak-run recover-journal` to roll back
@@ -342,4 +344,8 @@ Look for:
 5. **Online preserves journal** - Prefer for production
 6. **Verify after** - Run check to confirm success
 7. **Full compaction has NO pre-flight check** - You must validate manually
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

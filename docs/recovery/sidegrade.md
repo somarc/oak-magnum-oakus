@@ -1,5 +1,10 @@
 # 🔄 Sidegrade (oak-upgrade)
 
+::: info 🎯 Scope
+SegmentStore (TarMK) • Oak 1.22.x – 2.4.0 ([version scope](/reference/oak-versions))  
+**Not for AEMaaCS**
+:::
+
 Sidegrade uses `oak-upgrade` to extract accessible content from a corrupted repository into a new, clean repository. This is the **last resort** when other recovery options fail.
 
 ## When to Use
@@ -17,7 +22,9 @@ $ java -jar oak-upgrade-<oak-version>.jar \
     /path/to/new/repository
 ```
 
-Source and destination are **positional** and point at the **repository directory that contains `segmentstore/`** — oak-upgrade appends `segmentstore` itself. Do not pass the `segmentstore` directory, and do not add an `upgrade` sub-command (the tool's own help banner prints `java -jar oak-upgrade-*.jar upgrade`, but a third positional argument fails with `Too much node store arguments`).
+Source and destination are **positional** and point at the **repository directory that contains `segmentstore/`** — oak-upgrade appends `segmentstore` itself. Do not pass the `segmentstore` directory, and do not add an `upgrade` sub-command (the tool's own help banner prints `java -jar oak-upgrade-*.jar upgrade`, but a third positional argument fails with `Too much node store arguments`). Passing the `segmentstore` directory fails with `IllegalStateException: …/segmentstore/segmentstore does not exist or is not a directory`.
+
+Stop AEM first: oak-upgrade opens the source read-only and takes no `repo.lock`, so nothing stops it from reading a store that AEM still has open, and the source "must not be modified while the copy operation is running" (`RepositorySidegrade` javadoc). If the source directory also holds a `workspaces/` folder (left over from a CRX2 → Oak upgrade), oak-upgrade treats it as a CRX2 repository and fails with `Repository configuration not found: …/repository.xml`; move that folder aside.
 
 ::: warning Different JAR
 This uses `oak-upgrade-*.jar`, NOT `oak-run-*.jar`. They are separate tools (`oak-run upgrade` only prints "This command was moved to the oak-upgrade module"). Use the standalone `oak-upgrade` release that matches your oak-core version (`oak-upgrade-1.22.x.jar` on AEM 6.5, `oak-upgrade-2.4.0.jar` on AEM 6.5 LTS SP3) — the AEM 6.5 LTS release notes say crx2oak is not supported there. See [which LTS SP has which Oak](/reference/oak-versions).
@@ -37,8 +44,19 @@ flowchart TD
 
 1. **Attempts to traverse from HEAD** (on a full segment→segment copy it first copies the checkpoints, then applies the diff to HEAD)
 2. **Copies every node it is asked to copy** to the new repository
-3. **Does NOT skip unreadable nodes** — a `SegmentNotFoundException` anywhere in the copied tree aborts the whole run with `Failed to copy content`. Leave known-corrupt paths out with `--exclude-paths` (find them first with `oak-run check` or `:count-nodes`)
+3. **Does NOT skip unreadable nodes** — a `SegmentNotFoundException` anywhere in the copied tree aborts the whole run with `Failed to copy content`. Leave known-corrupt paths out with `--exclude-paths` (find them first with `oak-run check` or `:count-nodes`, a [fork-only](/reference/oak-versions#fork-only-console-commands) console command)
 4. **Results in a new, smaller repository** with only recoverable content
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+oak-upgrade has two copy modes, and which one you get decides what the new repository needs before AEM can use it:
+
+- **Full copy**: no `--include-paths`/`--exclude-paths`/`--merge-paths`, default version options, no `--skip-checkpoints`, empty destination. Every checkpoint is copied, then HEAD, as diffs written straight into new segments (progress line `Copying node 10000: …`, no `#`). No commit hooks run. Each checkpoint is re-created under a new name and `/:async` is rewritten to match (`Rewriting checkpoint names in /:async {async=…}`), so async indexing simply continues. `/:clusterConfig` comes along: the new repository has the **same cluster ID** (repository ID) as the old one.
+- **Filtered copy**: anything else. HEAD only (`Checkpoints won't be migrated because of the specified paths`, `… version settings`, `… --skip-checkpoints options` or `… the destination repository exists`; progress line `Copying node #10000: …`), then one big commit through the commit hooks: node-type check (violations are logged as `WARN … OakConstraint…`, not fatal), permission store, versionable paths, and a property/reference index update. No checkpoints are created, yet `/:async` is still copied with the **old** checkpoint names: on first start each async lane logs `[async] Failed to retrieve previously indexed checkpoint …; re-running the initial index update` and re-traverses the whole repository. Index data is copied as stored: entries for excluded paths stay in the indexes (lab: all 50 property-index entries under an excluded `/content/excluded` were still in `/oak:index/foo/:index`). Reindex the indexes that cover what you excluded.
+
+A full copy also reads every checkpoint, so damage that only a checkpoint reaches aborts it, and so does a checkpoint that has **expired** while the store sat idle: re-creating it with a negative lifetime fails with a bare `java.lang.IllegalArgumentException` under `Failed to copy content`. `--skip-checkpoints` gets past both (and switches to a filtered copy).
+
+Before any of this, oak-upgrade scans the source's segments for an external blob reference (to decide how to handle binaries; it reads every data segment until it finds one). An unreadable segment stops it right there with a bare `SegmentNotFoundException`, not `Failed to copy content`. If the source uses a DataStore, `--src-external-ds=true` skips the scan.
+:::
 
 ## Example
 
@@ -59,6 +77,16 @@ $ java -jar oak-upgrade-<oak-version>.jar \
 
 Progress is logged every 10,000 nodes (`-Doak.upgrade.logNodeCopy=<n>` to change). If a corrupted node is hit, the run ends with `javax.jcr.RepositoryException: Failed to copy content` — add that path to `--exclude-paths` and start over with an empty destination.
 
+The error does not name the path, only the segment (exit code 1):
+
+```
+Exception in thread "main" java.lang.RuntimeException: javax.jcr.RepositoryException: Failed to copy content
+...
+Caused by: org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 86cc84d2-a2ef-4ab9-a4be-57cb94eff9e8 not found
+```
+
+Take the path from `oak-run check` (`Error while traversing /content/corrupted: …SegmentNotFoundException…`). Exclude the node whose own record is lost: excluding one of its children doesn't help (lab: `--exclude-paths=/content/corrupted/c1` still aborted, `/content/corrupted` worked). When the lost record belongs to the parent's child list (a child-map bucket, or a child's name), merely listing the parent fails, and the parent itself has to be excluded ([why](/architecture/bricked#_2-records-only-point-down)).
+
 ## Options
 
 ### Essential Options
@@ -72,15 +100,19 @@ Progress is logged every 10,000 nodes (`-Doak.upgrade.logNodeCopy=<n>` to change
 
 ::: tip Binaries: references vs copies
 If the source uses an external DataStore and you pass no DataStore options, only **blob references** are copied — the new repository must keep using the same DataStore. Pass `--src-datastore` (plus `--datastore` to copy into a new FileDataStore, or `--copy-binaries` to embed them) to actually move binaries. When the source has external binaries, `--copy-binaries` or a target DataStore option *without* a source DataStore option is rejected ("This combination of data- and node-stores is not supported").
+
+`--src-datastore` on its own also copies only references, but not blindly: every reference is looked up in that DataStore, and a missing blob aborts the run (`DataStoreException: Record <id> does not exist`, lab, both copy modes). With no DataStore option at all, references are copied without looking at the DataStore, so references to missing blobs come across unchanged.
 :::
 
 ### Recovery-Specific Options
 
 | Option | Description |
 |--------|-------------|
-| `--fail-on-error` | Only affects JCR2 (CRX2) → Oak upgrades. A segment→segment sidegrade never skips unreadable nodes, with or without this flag |
-| `--ignore-missing-binaries` | Proceed even if binaries are missing from the **source** DataStore (only takes effect with a source DataStore option: `--src-datastore`, `--src-s3datastore` or `--src-azuredatastore`) |
-| `--skip-checkpoints` | Don't copy checkpoints on a full segment→segment migration (checkpoints are already skipped when include/exclude/merge paths or version options are used) |
+| `--fail-on-error` | Only affects JCR2 (CRX2) → Oak upgrades. A segment→segment sidegrade never skips unreadable nodes, with or without this flag. The same goes for `--skip-init` and `--early-shutdown`: the sidegrade never reads them, although the log still prints `Unreadable nodes will cause failure of the entire transaction` / `The repository initialization will be skipped` |
+| `--ignore-missing-binaries` | Proceed even if binaries are missing from the **source** DataStore (only takes effect with a source DataStore option: `--src-datastore`, `--src-s3datastore` or `--src-azuredatastore`). Each missing binary becomes an empty (0-byte) binary in the new repository; see [Recovery with Missing Binaries](#recovery-with-missing-binaries) |
+| `--skip-checkpoints` | Don't copy checkpoints on a full segment→segment migration (checkpoints are already skipped when include/exclude/merge paths or version options are used, or when the destination isn't empty). Also the way past an expired checkpoint (bare `IllegalArgumentException`) |
+| `--src-external-ds=true` | Tell oak-upgrade the source uses an external DataStore, which skips the up-front scan of the source's segments (that scan aborts on the first unreadable segment). Only `true` is safe for a store with a DataStore: `false` makes it treat the binaries as embedded |
+| `--verify` | After the copy, compare source and destination and log `Verification result: both repositories are identical` or `… are not identical`. It stops at the **first** difference and is not a loss report: a full copy of an AEM repository always differs in `/:async` (rewritten checkpoint names), a filtered one at the first excluded or re-indexed node. `--only-verify` compares without copying |
 | `--copy-versions` | Copy version storage: `true`, `false`, or `yyyy-mm-dd` cutoff (default: true) |
 | `--copy-orphaned-versions` | Copy orphaned versions: `true`, `false`, or `yyyy-mm-dd` cutoff (default: true) |
 
@@ -101,6 +133,7 @@ If the source uses an external DataStore and you pass no DataStore options, only
 | `--src-s3config <file>` | Source S3 configuration file |
 | `--s3datastore <path>` | Target S3 DataStore directory (local cache dir) |
 | `--s3config <file>` | Target S3 configuration file |
+| `--src-azureconfig <file>` / `--azureconfig <file>` | Source / target Azure DataStore configuration (the config file alone is enough; `--src-azuredatastore` / `--azuredatastore <path>` are optional) |
 
 `--fds-path` is an **oak-run** option; oak-upgrade does not accept it — use `--src-datastore` / `--datastore`.
 
@@ -113,7 +146,7 @@ For TarMK there is no prefix — pass the plain repository directory:
 /path/to/crx-quickstart/repository
 ```
 
-(oak-upgrade also accepts `az:`, `mongodb://` and `jdbc:` descriptors, but Azure segment stores and DocumentNodeStore are outside the scope of this guide. There is no `segment-tar:` prefix and no `--src=` / `--dst=` option.)
+(oak-upgrade also accepts `az:`, `mongodb://` and `jdbc:` descriptors, plus `segment-old:` for the pre-Oak-1.6 segment format, but Azure segment stores and DocumentNodeStore are outside the scope of this guide. There is no `segment-tar:` prefix and no `--src=` / `--dst=` option.)
 
 ### Selective Migration
 
@@ -123,6 +156,10 @@ $ java -jar oak-upgrade-<oak-version>.jar \
     --include-paths=/content,/apps \
     /path/to/corrupted/crx-quickstart/repository /path/to/new/repository
 ```
+
+::: warning Not a bootable repository on its own
+Into an empty destination, `--include-paths` copies those subtrees and nothing else: no `/oak:index`, no node types, no `/home` or `/libs`, no `/:clusterConfig`, no `/:async` (lab: the new root held only `content` and `jcr:system/jcr:versionStorage`). Use it to merge into a working repository ([Merge with Old Backup](#merge-with-old-backup)). To leave damage out of a full repository, use `--exclude-paths`.
+:::
 
 ### Merge with Old Backup
 
@@ -136,11 +173,14 @@ If you have an old backup and want to merge recent accessible content:
 $ java -jar oak-upgrade-<oak-version>.jar \
     --include-paths=/content,/home \
     --merge-paths=/content,/home \
+    --exclude-paths=/content/corrupted \
     /path/to/corrupted/crx-quickstart/repository \
     /path/to/restored/crx-quickstart/repository
 
 # Result: Old backup + recent changes (minus corrupted paths)
 ```
+
+The `--exclude-paths` line is what leaves the corrupted paths out: without it the merge aborts at the first unreadable node like any sidegrade (lab: exit 1, then exit 0 with it). AEM must be stopped on the restored repository. It keeps its own checkpoints, `/:async` and cluster ID, and oak-upgrade logs `The version storage on destination already exists. Orphaned version histories will be skipped.` Only blob references are copied, so the restored repository must use a DataStore that holds the corrupted repository's newer binaries (the live DataStore, not an older restored copy).
 
 ### Recovery with Missing Binaries
 
@@ -158,6 +198,10 @@ $ java -jar oak-upgrade-<oak-version>.jar \
 # ("No blob found for id [...]") and read as an empty stream
 # You'll need to re-upload missing assets later
 ```
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+The empty stream is what gets written: each missing binary becomes an **empty, 0-byte binary stored inline** in the new segment store, and its original blob ID is gone (lab: `a.jpg` came out `inline length=0`, with `--datastore`, `--copy-binaries` or `--src-datastore` alone). A blob you later find in a DataStore backup can't be put back under that node by ID. If you would rather keep the references, run without any DataStore option: references are copied unchanged, missing ones included, and the new repository keeps using the same DataStore. Without `--ignore-missing-binaries`, any source DataStore option makes a missing blob fatal (`DataStoreException: Record <id> does not exist`).
+:::
 
 ### Skip Old Versions (Faster Recovery)
 
@@ -188,6 +232,10 @@ Standby recovery is **rarely viable** in practice.
 - By the time corruption is discovered, standby already has it
 - Standby sync happens continuously (usually every few seconds)
 - Corruption on primary → quickly replicated to standby
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+The standby copies what the primary can still read. Each sync (every 5 seconds by default) diffs the primary's head against its own and pulls every segment it doesn't have yet; it moves its head only after the whole diff is copied. A segment the primary can no longer serve stops that sync with `IllegalStateException: Unable to read segment <id>` (or `Unable to read references of segment <id> from primary`), and the standby keeps its last complete head. So bad content, and anything the primary can still read, is replicated within seconds, but a segment **lost** on the primary does not become a hole on the standby. If the standby log shows those errors from around the time of the damage, take a copy of the standby and run `oak-run check` on it before ruling it out.
+:::
 
 ### When Standby MIGHT Work (Extremely Rare)
 
@@ -264,6 +312,11 @@ These times are **I/O bound** - sidegrade must read every accessible node from t
    $ ./crx-quickstart/bin/start
    ```
 
+::: tip First start after a sidegrade
+- **Async indexes**: after a full copy, async indexing continues from the copied checkpoints. After a filtered copy (`--exclude-paths` etc.), expect `Failed to retrieve previously indexed checkpoint …; re-running the initial index update` and a full re-traversal per async lane, and reindex the indexes that cover the paths you left out (their old entries were copied).
+- **DataStore**: unless binaries were moved, the new segment store only holds references: keep the **same** DataStore. A full or `--exclude-paths` copy also keeps the old repository's cluster ID, so it registers the same `repository-<id>` marker. That is right when it replaces the damaged repository. Never start the damaged copy again against the same DataStore: two repositories with one ID are a clone ([Cloned Environments Sharing a DataStore](/datastore/gc#cloned-environments)).
+:::
+
 ## Backup Timing: The #1 DevOps Mistake
 
 ::: danger ⚠️ CRITICAL: Stop AEM Before Backup
@@ -284,6 +337,10 @@ $ aws ec2 create-snapshot --volume-id vol-xxx  # VM still running
 - ❌ Backup captures **inconsistent state** (some TARs updated, others not)
 - ❌ Backup contains **corrupted journal.log** (truncated mid-write)
 - ❌ Restore will fail with SegmentNotFoundException
+
+::: warning What the Oak code actually does (Oak 1.22 and 2.4)
+Oak is built to survive a crash, so the first and third bullets are rarely what kills a restore by themselves. A TAR file whose index was never written is rebuilt on open (`Could not find a valid tar index in …, recovering...`, dropping entries that fail their checksum), a half-written last journal line is skipped (`Skipping invalid journal entry`), and journal entries whose segments are missing are passed over (`Unable to access revision …, rewinding...`). The damage comes from the second bullet: a file-by-file copy (`tar`, `rsync`, `cp`) takes every file at a different moment, and online revision GC can rewrite or delete TAR files while the copy runs. Such a restore at best silently rewinds to an older head and at worst hits SegmentNotFoundException. A volume snapshot is one moment for that volume only: a segment store and a DataStore on different volumes are not snapshotted together. Stopping AEM avoids all of it.
+:::
 
 ### RIGHT: Stop AEM, Then Backup
 
@@ -312,11 +369,13 @@ $ java -jar oak-run-*.jar check /path/to/backup/segmentstore
 # ❌ SegmentNotFoundException = Backup is corrupt (was taken while running)
 ```
 
+`check` exits 0 on a damaged store too, and still prints `Latest good revision …`: it is the newest revision that passed, not proof that HEAD did. The backup is good when that revision is the **first** `Checking revision …` of the run and there are no `Error while traversing …` or `Skipping invalid record id …` lines. A damaged backup prints the SegmentNotFoundException inside those lines, not as a crash ([reading check output](/recovery/check#🚨-critical-bricked-vs-recoverable-distinction)).
+
 ### Backup Validation Checklist
 
 1. ✅ AEM was stopped when backup taken
 2. ✅ Backup timestamp is AFTER AEM stop time
-3. ✅ `oak-run check` passes on backup segmentstore
+3. ✅ `oak-run check` passes on backup segmentstore (latest good revision = first revision checked, no traversal errors)
 4. ✅ Backup restore tested successfully (at least once)
 
 ## If Sidegrade Fails
@@ -346,4 +405,8 @@ If you're in this scenario with no backup, there is **no Oak magic** that will s
 5. **Stop AEM before backup** - Running backups capture inconsistent state
 6. **Test backups** - Run `oak-run check` on backup before you need it
 7. **Time scales with size** - 1TB = 10-20x longer than 100GB
+:::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
 :::

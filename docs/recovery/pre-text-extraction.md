@@ -300,3 +300,7 @@ For oak-run, check the `Using pre-extracted text directory` log line and the `Te
 6. **The store is for reindexing** - verify via the `Using pre-extracted text directory` log line or the `TextExtractionStats` MBean
 7. **Plan ahead** - Generate CSV and extract text BEFORE you need to reindex
 :::
+
+::: info 📅 Last Updated
+Content last reviewed: October 2026 • Verified against Oak 1.22.24 (AEM 6.5) and Oak 2.4.0 (AEM 6.5 LTS SP3)
+:::

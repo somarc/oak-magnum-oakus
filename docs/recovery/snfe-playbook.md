@@ -118,7 +118,7 @@ org.apache.jackrabbit.oak.segment.SegmentNotFoundException: Segment 0a1b2c3d-4e5
 java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 ```
 
-**What it does**: Rebuilds `journal.log` from the root records found in the TAR files, dropping the newest revisions whose head or checkpoints are corrupted, so the last good revision becomes HEAD. The old journal is kept as `journal.log.bak.NNN`.
+**What it does**: Rebuilds `journal.log` from the root records found in the TAR files, dropping the newest revisions whose head or checkpoints are corrupted, so the last good revision becomes HEAD. The old journal is kept as `journal.log.bak.NNN`. It takes no lock, so nothing stops it from rewriting the journal under a running AEM: keep AEM stopped and work on the copy.
 
 **Data loss**: Changes since the good revision timestamp.
 
@@ -133,13 +133,17 @@ java -jar oak-run-*.jar recover-journal /path/to/segmentstore
 ```bash
 # Find corrupted paths
 java -jar oak-run-*.jar console --read-write /path/to/segmentstore
-> :count-nodes deep analysis
+> :count-nodes segment-binaries analysis
+# segment-binaries reads everything the segment store holds. "deep" also reads every
+# DataStore binary: only with your DataStore option on the console line (--fds-path,
+# --s3ds, --azureblobds), or every DataStore binary is logged as missing. Fork builds
+# before cf88588 need it in a read-only console (see Surgical Removal, Step 2)
 # Review ./count-nodes-snfe-yyyyMMdd-HHmmss.log (written to the current directory)
 
 # Missing-segment paths: remove one by one (no dry-run); a :remove-nodes report prints each command
 > :remove-node /content/dam/2024/Q3
 
-# Missing-blob lines: remove-nodes (dry-run first!, exact file name, no wildcard)
+# Unreadable-node and DataStore missing-blob lines: remove-nodes (dry-run first!, exact file name, no wildcard)
 > :remove-nodes count-nodes-snfe-20240111-093500.log dry-run
 > :remove-nodes count-nodes-snfe-20240111-093500.log
 > :exit
@@ -164,6 +168,12 @@ java -jar oak-upgrade-<oak-version>.jar \
 
 **Data loss**: Unknown — the sidegrade aborts on the first unreadable node, so known-corrupt paths must be left out with `--exclude-paths`. See [Sidegrade](/recovery/sidegrade).
 
+What to exclude, from the lab on both versions ([details](/recovery/sidegrade#example)):
+- The abort (`Failed to copy content`) names only the segment, never the path. Take the path from `check`: `Error while traversing /content/…: …SegmentNotFoundException…`.
+- Exclude the broken node **itself**: excluding one of its children still aborts.
+- When the lost segment held the child's **name** (the parent's child list), even listing the parent fails: exclude the parent.
+- Any path option makes it a filtered copy: no checkpoints are copied, so every async lane re-runs its initial indexing on the first start. Plan for that.
+
 ### Path D: Restore from Backup
 
 **When to use**: Check itself fails with SNFE, or you have a recent backup.
@@ -185,7 +195,7 @@ ls -la /path/to/segmentstore/*.tar
 # Look for very small recent TAR files (< 1KB)
 ```
 
-**Recovery**: Usually [Journal Recovery](/recovery/journal) works.
+**Recovery**: Usually [Journal Recovery](/recovery/journal) works. If `check` stops with `Failed to open tar file …` on that newest file, see [check, Scenario B](/recovery/check#scenario-b-check-can-t-even-run-fatal): a file with no complete segment left can be dropped by a read-write open of a **copy**, which rewinds to an older head.
 
 ### Scenario 2: Disk Full During Write
 
@@ -246,14 +256,15 @@ wc -l /path/to/segmentstore/journal.log
 ### Scenario 5: Invisible Missing Blobs (Indexing Death Loop)
 
 **Symptoms**:
-- `datastorecheck` shows 0 missing blobs
+- `datastorecheck --verbose` shows 0 missing blobs (`--verbose` walks HEAD only; run it once more **without** `--verbose`, which also checks what checkpoints reference: [what each check can see](/datastore/consistency#what-each-check-can-see))
 - `count-nodes deep` finds no issues
 - But indexing keeps failing with `DataStoreException`
 - Checkpoints are months old
 
 **Diagnosis**:
 ```bash
-# Check checkpoint age
+# Check checkpoint age (AEM stopped: with AEM running this waits silently on repo.lock;
+# online, use JMX CheckpointManager → listCheckpoints())
 java -jar oak-run-*.jar checkpoints /path/to/segmentstore list
 # Old checkpoints (months) = likely invisible blob problem
 ```
