@@ -21,12 +21,12 @@ A consistency check answers one question: does every binary the repository refer
 |------|-----|----------------------|---------------|-------|
 | [`datastorecheck --consistency`](#datastorecheck) | Stopped | Everything still in the store; HEAD only with `--verbose` | No | With `--verbose` |
 | [`datastore --check-consistency`](#datastore-check-consistency) | Stopped | Everything still in the store; HEAD only with `--verbose` | No | With `--verbose` |
-| [BlobGarbageCollection MBean](#online-check) | Running | Everything still in the store | No | No |
+| [BlobGarbageCollection MBean](#online-check) | Running | Everything still in the store; ⚠️ blind on Oak 2.4.0 by default | No | No |
 | [`:count-nodes`](#count-nodes) ⚠️ fork only | Stopped | HEAD only | Yes, every byte | Always |
 
 "Everything still in the store" means the binary-reference index of every TAR file in the retained GC generations: HEAD, older revisions that GC has not reclaimed yet, and checkpoints. "HEAD only" means a walk of the current tree from `/`.
 
-- **AEM has to stay up**: use the MBean.
+- **AEM has to stay up**: use the MBean, except on Oak 2.4.0, where it reports 0 missing unless the blob ID tracker is on.
 - **You need to know which content is affected**: `datastorecheck --consistency --verbose`.
 - **Indexing fails but HEAD looks clean**: run without `--verbose`. Only that mode sees blobs that a checkpoint still references.
 - **Blobs exist but reads fail**: `:count-nodes datastore-binaries`. It is the only tool that reads the content.
@@ -142,6 +142,10 @@ Oak treats every FileDataStore, S3 and Azure DataStore as shared, even when only
 
 The check runs in the background and ends with `Consistency check completed in … N missing blobs found (details in the log).` It checks the same references as `datastore` without `--verbose`, so `error.log` gets the same `Missing Blob [<id>]` lines, with IDs only. The `gcworkdir-<timestamp>` directory goes to the JVM's temp directory (`java.io.tmpdir`). The [shared DataStore](#shared-datastore) behavior applies. Available in Oak 1.22 and 2.4.
 
+::: danger Oak 2.4.0 (AEM 6.5 LTS SP3): always 0 missing
+Oak 2.4.0 turned the blob ID tracker off by default (`blobTrackSnapshotIntervalInSecs=0` on `SegmentNodeStoreService`; 43200 before). The online check runs its result through the tracker's filter, and with the tracker off that filter returns nothing: the check reports `0 missing blobs` whatever is missing. Use oak-run on 2.4.0, or set `blobTrackSnapshotIntervalInSecs` above 0. Oak 1.22 through 1.88 are not affected.
+:::
+
 ### `:count-nodes` {#count-nodes}
 
 ::: warning ⚠️ Not in Apache Oak
@@ -202,7 +206,7 @@ datastore --check-consistency : gccand = JCR References - DataStore Blob IDs
 Every signal points the wrong way:
 
 1. **The name.** `gccand` means "GC candidates". The consistency check runs on DataStore GC's own machinery and keeps its work directory, `gcworkdir-<ts>/` with `marked-`, `avail-` and `gccand-` files. The names were chosen for the sweep, where `gccand` is the list of what gets deleted.
-2. **The habit.** A DataStore GC run that deletes anything leaves its `gcworkdir` behind, often with thousands of lines in `gccand`. That is normal there: orphans pile up between GC runs. 523 lines looks like routine GC output.
+2. **The habit.** oak-run keeps the `gcworkdir` of every DataStore GC run, often with thousands of lines in `gccand`. That is normal there: orphans pile up between GC runs. 523 lines looks like routine GC output.
 3. **The shape.** With `--verbose` on a FileDataStore, every line starts with `d8/4d/0b/d84d0b9e…`, a relative path inside the DataStore. It reads like a listing of files that are sitting in the store. No file exists at any of those paths. That is the finding.
 4. **The silence.** Nothing in the file says "missing": no header, no count. The verdict (`Consistency check failure in the the blob store`, `Found 523 missing blobs`) is only in the console output and `temp/datastore.log`.
 5. **The exit code.** `datastore --check-consistency` exits `0` with 523 blobs missing. Only an exception makes it exit `1`. A script or runbook that checks `$?` reports success.
@@ -210,7 +214,7 @@ Every signal points the wrong way:
 
 ### Read it right
 
-After `--check-consistency`, the file's existence is the verdict: when nothing is missing, oak-run deletes `gcworkdir-<ts>` at the end of the run (unless TRACE logging is on). **If a `gccand` file exists, blobs are missing.**
+After `--check-consistency`, the file's size is the verdict. oak-run keeps `gcworkdir-<ts>` after every run, so the file is there either way: **an empty `gccand` means nothing is missing; every line in it is a missing blob.**
 
 ```bash
 # 1. Count distinct blobs (with --verbose, one blob can appear at several paths)
@@ -425,7 +429,7 @@ Do **not** delete `repository-<old id>` here: the original instance still uses i
 2. **gccand after `--check-consistency` shows MISSING blobs** (after `--collect-garbage` it shows orphans) - Don't misinterpret!
 3. **Missing blobs = data loss** - Unless a copy exists somewhere: blob IDs are content hashes, so any copy of the file works
 4. **A consistency check clears GC marks** - `datastore --check-consistency` and the MBean delete every repository's references; mark them all again before the next sweep
-5. **The exit code lies** - `datastore --check-consistency` exits `0` with blobs missing; the `gccand` file's existence is the verdict
+5. **The exit code lies** - `datastore --check-consistency` exits `0` with blobs missing; a non-empty `gccand` is the verdict
 6. **Run after DataStore GC** - Verify nothing was incorrectly deleted
 7. **Reset cluster ID after cloning** - And delete markers no instance uses
 8. **Check before migration** - Ensure consistency before moving

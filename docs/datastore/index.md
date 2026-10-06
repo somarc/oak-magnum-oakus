@@ -95,17 +95,19 @@ java -jar oak-run-*.jar datastore --collect-garbage true \
     /path/to/segmentstore
 
 # Mark + sweep (deletes unreferenced blobs older than --max-age, default 86400 s)
-java -jar oak-run-*.jar datastore --collect-garbage \
+# --ds-read-write is what allows it to delete
+java -jar oak-run-*.jar datastore --collect-garbage --ds-read-write \
     --fds-path /path/to/datastore \
     /path/to/segmentstore
 ```
 
-There is no separate `mark`/`sweep` sub-command: `--collect-garbage [markOnly]` runs mark only with `true`, mark **and** sweep without it. The segment store path is a positional argument (no `--store`). Use `--fds-path <dir>` or `--fds <config file>` for a FileDataStore, `--s3ds`/`--azureblobds <config file>` for cloud stores.
+There is no separate `mark`/`sweep` sub-command: `--collect-garbage [markOnly]` runs mark only with `true`, mark **and** sweep without it. Without `--ds-read-write`, the sweep deletes nothing and still exits `0`; never add `--verbose` or `--read-write` ([why](/datastore/gc#running-it)). The segment store path is a positional argument (no `--store`). Use `--fds-path <dir>` or `--fds <config file>` for a FileDataStore, `--s3ds`/`--azureblobds <config file>` for cloud stores.
 
 ::: warning ⚠️ DataStore GC Timing
 - Blobs modified within `--max-age` (default 24 h; online: `blobGcMaxAgeInSecs`, default 86400) before the mark start are never swept - that is what protects in-flight uploads
 - On a **shared** DataStore, run mark-only on every other repository first; the sweep stops with `Not all repositories have marked references available` until every registered `repository-<id>` has a `references-<id>…` record
 - Never run sweep without recent marks from all sharing repositories
+- A cloned environment pointed at the same DataStore shares it too, usually with the same repository ID: see [Cloned Environments](/datastore/gc#cloned-environments)
 :::
 
 ## Detailed Guides
